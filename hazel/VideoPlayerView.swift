@@ -2,16 +2,14 @@ import AppKit
 import AVFoundation
 
 class VideoPlayerView: NSView {
-    private var player: AVQueuePlayer?
-    private var playerLooper: AVPlayerLooper?
-    private var playerLayer: AVPlayerLayer?
+    private let playerCore = WallpaperPlayerCore()
     private var currentURL: URL?
     private var currentIsLooping: Bool = true
     private var currentIsMuted: Bool = true
     private var currentFit: WallpaperFit = .fill
 
     var isPlaying: Bool {
-        player?.rate ?? 0 > 0
+        playerCore.isPlaying
     }
 
     override init(frame frameRect: NSRect) {
@@ -25,68 +23,43 @@ class VideoPlayerView: NSView {
     }
 
     func loadVideo(url: URL, isLooping: Bool = true, isMuted: Bool = true, fit: WallpaperFit) {
-        cleanup()
         currentURL = url
         currentIsLooping = isLooping
         currentIsMuted = isMuted
         currentFit = fit
 
-        let asset = AVURLAsset(url: url)
-
-        let playerItem = AVPlayerItem(asset: asset)
-        playerItem.preferredForwardBufferDuration = 2.0
-
-        let queuePlayer = AVQueuePlayer(playerItem: playerItem)
-        
-        if isLooping {
-            let looper = AVPlayerLooper(player: queuePlayer, templateItem: playerItem)
-            self.playerLooper = looper
+        playerCore.load(url: url, isLooping: isLooping, isMuted: isMuted, fit: fit, bounds: bounds)
+        if let playerLayer = playerCore.layer {
+            layer?.addSublayer(playerLayer)
         }
-
-        let layer = AVPlayerLayer(player: queuePlayer)
-        layer.videoGravity = fit.videoGravity
-        layer.frame = bounds
-
-        self.layer?.addSublayer(layer)
-
-        self.player = queuePlayer
-        self.playerLayer = layer
-        queuePlayer.isMuted = isMuted
-
-        queuePlayer.play()
     }
-    
+
     func setMuted(_ muted: Bool) {
-        player?.isMuted = muted
+        playerCore.setMuted(muted)
         currentIsMuted = muted
     }
-    
+
     func reloadWithSettings() {
         guard let url = currentURL else { return }
         loadVideo(url: url, isLooping: currentIsLooping, isMuted: currentIsMuted, fit: currentFit)
     }
 
     func play() {
-        player?.play()
+        playerCore.play()
     }
 
     func pause() {
-        player?.pause()
+        playerCore.pause()
     }
 
     func cleanup() {
-        player?.pause()
-        playerLayer?.removeFromSuperlayer()
-        playerLooper?.disableLooping()
-        playerLooper = nil
-        player = nil
-        playerLayer = nil
+        playerCore.cleanup()
         currentURL = nil
     }
 
     override func layout() {
         super.layout()
-        playerLayer?.frame = bounds
+        playerCore.resize(to: bounds)
     }
 
     deinit {
