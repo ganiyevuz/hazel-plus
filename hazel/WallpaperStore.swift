@@ -71,6 +71,8 @@ class WallpaperStore: ObservableObject {
 
                 UserDefaults.standard.removeObject(forKey: "activeWallpaperID")
                 UserDefaults.standard.removeObject(forKey: "wallpaperFit")
+
+                save()
             }
         } catch {
             print("Failed to load wallpapers: \(error)")
