@@ -79,7 +79,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let item = NSMenuItem(title: fit.rawValue, action: #selector(fitSelected(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = fit
-            if fit == SettingsManager.shared.wallpaperFit {
+            if fit == (store?.wallpaperFit ?? .fill) {
                 item.state = .on
             }
             fitMenu.addItem(item)
@@ -114,7 +114,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func fitSelected(_ sender: NSMenuItem) {
         guard let fit = sender.representedObject as? WallpaperFit else { return }
-        SettingsManager.shared.wallpaperFit = fit
+        store?.wallpaperFit = fit
         
         if let menu = statusItem?.menu {
             if let fitItem = menu.item(withTitle: "Wallpaper Fit"),

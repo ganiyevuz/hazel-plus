@@ -21,20 +21,7 @@ enum WallpaperFit: String, CaseIterable, Codable {
 @Observable
 class SettingsManager {
     static let shared = SettingsManager()
-    
-    var wallpaperFit: WallpaperFit {
-        get {
-            if let rawValue = UserDefaults.standard.string(forKey: "wallpaperFit"),
-               let fit = WallpaperFit(rawValue: rawValue) {
-                return fit
-            }
-            return .fill
-        }
-        set {
-            UserDefaults.standard.set(newValue.rawValue, forKey: "wallpaperFit")
-        }
-    }
-    
+
     var openOnStartup: Bool {
         get {
             UserDefaults.standard.bool(forKey: "openOnStartup")

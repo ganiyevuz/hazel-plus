@@ -5,31 +5,29 @@ import Combine
 
 class WallpaperStore: ObservableObject {
     @Published var wallpapers: [WallpaperItem] = []
+    @Published var wallpaperFit: WallpaperFit = .fill {
+        didSet { if isLoaded { save() } }
+    }
     var activeWallpaperID: UUID? {
-        didSet {
-            if let id = activeWallpaperID {
-                UserDefaults.standard.set(id.uuidString, forKey: "activeWallpaperID")
-            } else {
-                UserDefaults.standard.removeObject(forKey: "activeWallpaperID")
-            }
-        }
+        didSet { if isLoaded { save() } }
     }
 
     private let fileManager = FileManager.default
-    
+    private var isLoaded = false
+
     private var appSupportURL: URL {
         let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let appFolder = appSupport.appendingPathComponent("LiveWallpaper", isDirectory: true)
         try? fileManager.createDirectory(at: appFolder, withIntermediateDirectories: true)
         return appFolder
     }
-    
+
     private var videosURL: URL {
         let videosFolder = appSupportURL.appendingPathComponent("Videos", isDirectory: true)
         try? fileManager.createDirectory(at: videosFolder, withIntermediateDirectories: true)
         return videosFolder
     }
-    
+
     private var storageURL: URL {
         return appSupportURL.appendingPathComponent("wallpapers.json")
     }
@@ -40,24 +38,39 @@ class WallpaperStore: ObservableObject {
     }
 
     init() {
-        if let idString = UserDefaults.standard.string(forKey: "activeWallpaperID"),
-           let id = UUID(uuidString: idString) {
-            activeWallpaperID = id
-        }
         load()
     }
 
     func load() {
+        defer { isLoaded = true }
+
         guard fileManager.fileExists(atPath: storageURL.path) else { return }
+
         do {
             let data = try Data(contentsOf: storageURL)
             let decoder = JSONDecoder()
-            wallpapers = try decoder.decode([WallpaperItem].self, from: data)
-            
-            if let idString = UserDefaults.standard.string(forKey: "activeWallpaperID"),
-               let id = UUID(uuidString: idString),
-               wallpapers.contains(where: { $0.id == id }) {
-                activeWallpaperID = id
+
+            if let file = try? decoder.decode(WallpaperLibraryFile.self, from: data) {
+                wallpapers = file.wallpapers
+                activeWallpaperID = file.activeWallpaperID
+                wallpaperFit = file.wallpaperFit
+            } else {
+                // Legacy format: a bare [WallpaperItem] array, with active ID and fit
+                // still in UserDefaults from before the shared-file schema existed.
+                wallpapers = try decoder.decode([WallpaperItem].self, from: data)
+
+                if let idString = UserDefaults.standard.string(forKey: "activeWallpaperID"),
+                   let id = UUID(uuidString: idString),
+                   wallpapers.contains(where: { $0.id == id }) {
+                    activeWallpaperID = id
+                }
+                if let rawFit = UserDefaults.standard.string(forKey: "wallpaperFit"),
+                   let fit = WallpaperFit(rawValue: rawFit) {
+                    wallpaperFit = fit
+                }
+
+                UserDefaults.standard.removeObject(forKey: "activeWallpaperID")
+                UserDefaults.standard.removeObject(forKey: "wallpaperFit")
             }
         } catch {
             print("Failed to load wallpapers: \(error)")
@@ -68,7 +81,8 @@ class WallpaperStore: ObservableObject {
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = .prettyPrinted
-            let data = try encoder.encode(wallpapers)
+            let file = WallpaperLibraryFile(wallpapers: wallpapers, activeWallpaperID: activeWallpaperID, wallpaperFit: wallpaperFit)
+            let data = try encoder.encode(file)
             try data.write(to: storageURL)
         } catch {
             print("Failed to save wallpapers: \(error)")
@@ -84,7 +98,7 @@ class WallpaperStore: ObservableObject {
         defer { url.stopAccessingSecurityScopedResource() }
 
         let fileName = url.deletingPathExtension().lastPathComponent
-        
+
         if wallpapers.contains(where: { $0.title == fileName }) {
             print("Video already exists: \(fileName)")
             return nil
@@ -119,9 +133,9 @@ class WallpaperStore: ObservableObject {
             if let thumbnailPath = wallpapers[index].thumbnailPath {
                 try? fileManager.removeItem(atPath: thumbnailPath)
             }
-            
+
             try? fileManager.removeItem(at: item.url)
-            
+
             wallpapers.remove(at: index)
             save()
         }
@@ -134,14 +148,14 @@ class WallpaperStore: ObservableObject {
     func setActiveWallpaper(_ item: WallpaperItem) {
         activeWallpaperID = item.id
     }
-    
+
     func toggleLoop(for item: WallpaperItem) {
         if let index = wallpapers.firstIndex(where: { $0.id == item.id }) {
             wallpapers[index].isLooping.toggle()
             save()
         }
     }
-    
+
     func toggleMute(for item: WallpaperItem) {
         if let index = wallpapers.firstIndex(where: { $0.id == item.id }) {
             wallpapers[index].isMuted.toggle()

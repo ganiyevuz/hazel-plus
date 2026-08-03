@@ -114,7 +114,7 @@ class WallpaperController: ObservableObject {
         }
 
         for (_, entry) in wallpaperWindows {
-            entry.playerView.loadVideo(url: url, isLooping: activeItem.isLooping, isMuted: activeItem.isMuted)
+            entry.playerView.loadVideo(url: url, isLooping: activeItem.isLooping, isMuted: activeItem.isMuted, fit: store.wallpaperFit)
         }
     }
 
@@ -143,9 +143,9 @@ class WallpaperController: ObservableObject {
     func reloadCurrentWallpaper() {
         guard let activeItem = store.activeWallpaper,
               let url = store.resolveBookmark(activeItem.url) else { return }
-        
+
         for (_, entry) in wallpaperWindows {
-            entry.playerView.loadVideo(url: url, isLooping: activeItem.isLooping, isMuted: activeItem.isMuted)
+            entry.playerView.loadVideo(url: url, isLooping: activeItem.isLooping, isMuted: activeItem.isMuted, fit: store.wallpaperFit)
         }
     }
 }
