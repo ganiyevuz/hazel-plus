@@ -92,13 +92,6 @@ class WallpaperStore: ObservableObject {
     }
 
     func addWallpaper(url: URL) -> WallpaperItem? {
-        guard url.startAccessingSecurityScopedResource() else {
-            print("Failed to start accessing security scoped resource")
-            return nil
-        }
-
-        defer { url.stopAccessingSecurityScopedResource() }
-
         let fileName = url.deletingPathExtension().lastPathComponent
 
         if wallpapers.contains(where: { $0.title == fileName }) {

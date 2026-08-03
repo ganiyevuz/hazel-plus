@@ -31,11 +31,6 @@ class VideoPlayerView: NSView {
         currentIsMuted = isMuted
         currentFit = fit
 
-        var securityScoped = false
-        if url.startAccessingSecurityScopedResource() {
-            securityScoped = true
-        }
-
         let asset = AVURLAsset(url: url)
 
         let playerItem = AVPlayerItem(asset: asset)
@@ -57,10 +52,6 @@ class VideoPlayerView: NSView {
         self.player = queuePlayer
         self.playerLayer = layer
         queuePlayer.isMuted = isMuted
-
-        if securityScoped {
-            url.stopAccessingSecurityScopedResource()
-        }
 
         queuePlayer.play()
     }
