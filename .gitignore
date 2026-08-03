@@ -28,3 +28,6 @@ Carthage/Checkouts/
 
 # OS
 Thumbs.db
+
+# Git worktrees (scratch, used for isolated implementation work)
+.worktrees/
