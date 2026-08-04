@@ -32,6 +32,7 @@ class VideoPlayerView: NSView {
         if let playerLayer = playerCore.layer {
             layer?.addSublayer(playerLayer)
         }
+        playerCore.play()
     }
 
     func setMuted(_ muted: Bool) {

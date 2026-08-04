@@ -31,8 +31,6 @@ final class WallpaperPlayerCore {
         self.layer = playerLayer
         self.player = queuePlayer
         queuePlayer.isMuted = isMuted
-
-        queuePlayer.play()
     }
 
     func setMuted(_ muted: Bool) {
