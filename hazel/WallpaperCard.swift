@@ -1,12 +1,11 @@
 import SwiftUI
 import AppKit
 
-/// Shared card geometry. 16:9 thumbnails so video stills are never letterboxed.
+/// Shared card geometry. 16:9 so video stills fill the frame without bars.
 private enum CardMetrics {
-    static let width: CGFloat = 168
-    static let thumbnailHeight: CGFloat = 94
-    static let cornerRadius: CGFloat = 10
-    static let thumbnailCornerRadius: CGFloat = 8
+    static let width: CGFloat = 208
+    static let height: CGFloat = 117
+    static let cornerRadius: CGFloat = 12
 }
 
 struct WallpaperCard: View {
@@ -24,35 +23,34 @@ struct WallpaperCard: View {
     @State private var detail: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            thumbnail
+        ZStack(alignment: .bottomLeading) {
+            artwork
+            scrim
             caption
+            badges
+            selectionRing
         }
-        .padding(8)
-        .frame(width: CardMetrics.width)
-        .background(
-            RoundedRectangle(cornerRadius: CardMetrics.cornerRadius, style: .continuous)
-                .fill(.quaternary.opacity(isHovered ? 0.6 : 0.35))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: CardMetrics.cornerRadius, style: .continuous)
-                .strokeBorder(Color.accentColor, lineWidth: isSelected ? 2 : 0)
-        )
-        // Lifts on hover the way native macOS grids do, rather than only tinting.
-        .shadow(color: .black.opacity(isHovered ? 0.18 : 0), radius: 8, y: 3)
+        .frame(width: CardMetrics.width, height: CardMetrics.height)
+        .clipShape(RoundedRectangle(cornerRadius: CardMetrics.cornerRadius, style: .continuous))
+        // The card itself lifts rather than tinting — closer to how native media
+        // grids respond, and it reads on top of a bright thumbnail.
+        .shadow(color: .black.opacity(isHovered ? 0.28 : 0.12),
+                radius: isHovered ? 10 : 4, y: isHovered ? 4 : 2)
+        .scaleEffect(isHovered ? 1.02 : 1)
         .contentShape(Rectangle())
         .onTapGesture(perform: onTap)
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.12)) { isHovered = hovering }
+            withAnimation(.easeOut(duration: 0.14)) { isHovered = hovering }
         }
         .contextMenu {
             Button(item.isLooping ? "Disable Loop" : "Enable Loop", systemImage: "repeat", action: onToggleLoop)
             Button(item.isPingPong ? "Normal Loop" : "Reverse Loop",
                    systemImage: item.isPingPong ? "arrow.right" : "arrow.left.arrow.right",
                    action: onTogglePingPong)
-                // Ping-pong drives the rate by hand, which needs looping on.
                 .disabled(!item.isLooping)
-            Button(item.isMuted ? "Unmute" : "Mute", systemImage: item.isMuted ? "speaker.slash" : "speaker.wave.2", action: onToggleMute)
+            Button(item.isMuted ? "Unmute" : "Mute",
+                   systemImage: item.isMuted ? "speaker.slash" : "speaker.wave.2",
+                   action: onToggleMute)
             Divider()
             Button("Compress for This Mac…", systemImage: "arrow.down.circle", action: onCompress)
             Divider()
@@ -65,8 +63,8 @@ struct WallpaperCard: View {
         .task(id: item.url) { await loadDetail() }
     }
 
-    private var thumbnail: some View {
-        ZStack {
+    private var artwork: some View {
+        Group {
             if let image = thumbnailImage {
                 Image(nsImage: image)
                     .resizable()
@@ -76,53 +74,76 @@ struct WallpaperCard: View {
                     .fill(.quaternary)
                     .overlay(
                         Image(systemName: "film")
-                            .font(.system(size: 20))
+                            .font(.system(size: 22))
                             .foregroundStyle(.secondary)
                     )
             }
         }
-        .frame(height: CardMetrics.thumbnailHeight)
-        .frame(maxWidth: .infinity)
-        .clipShape(RoundedRectangle(cornerRadius: CardMetrics.thumbnailCornerRadius, style: .continuous))
-        .overlay(alignment: .topTrailing) {
-            if isSelected {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 16))
-                    .foregroundStyle(.white, Color.accentColor)
-                    .padding(6)
-            }
-        }
+        .frame(width: CardMetrics.width, height: CardMetrics.height)
+        .clipped()
+    }
+
+    /// Keeps the caption legible over a bright or busy still.
+    private var scrim: some View {
+        LinearGradient(
+            colors: [.clear, .black.opacity(0.15), .black.opacity(0.7)],
+            startPoint: .center,
+            endPoint: .bottom
+        )
     }
 
     private var caption: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            titleRow
-            // Resolution and size together answer "is this worth compressing?"
-            Text(detail ?? " ")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
-        }
-    }
-
-    private var titleRow: some View {
-        HStack(spacing: 4) {
+        VStack(alignment: .leading, spacing: 1) {
             Text(item.title)
-                .font(.caption)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white)
                 .lineLimit(1)
                 .truncationMode(.middle)
 
-            Spacer(minLength: 0)
+            if let detail {
+                Text(detail)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.75))
+                    .lineLimit(1)
+            }
+        }
+        .shadow(radius: 2)
+        .padding(.horizontal, 10)
+        .padding(.bottom, 8)
+    }
 
-            // Only surface the non-default states, so the row stays quiet.
-            if !item.isLooping {
-                Image(systemName: "repeat.1").font(.caption2).foregroundStyle(.secondary)
+    /// Only non-default states appear, so a plain wallpaper shows no clutter.
+    private var badges: some View {
+        VStack {
+            HStack(spacing: 4) {
+                if item.isPingPong { badge("arrow.left.arrow.right") }
+                if !item.isLooping { badge("repeat.1") }
+                if !item.isMuted { badge("speaker.wave.2.fill") }
+                Spacer(minLength: 0)
             }
-            if item.isPingPong {
-                Image(systemName: "arrow.left.arrow.right").font(.caption2).foregroundStyle(.secondary)
-            }
-            if !item.isMuted {
-                Image(systemName: "speaker.wave.2.fill").font(.caption2).foregroundStyle(.secondary)
+            .padding(8)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func badge(_ systemName: String) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(.white)
+            .padding(4)
+            .background(.black.opacity(0.45), in: Circle())
+    }
+
+    private var selectionRing: some View {
+        ZStack(alignment: .topTrailing) {
+            RoundedRectangle(cornerRadius: CardMetrics.cornerRadius, style: .continuous)
+                .strokeBorder(Color.accentColor, lineWidth: isSelected ? 3 : 0)
+
+            if isSelected {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 17))
+                    .foregroundStyle(.white, Color.accentColor)
+                    .padding(8)
             }
         }
     }
@@ -160,32 +181,29 @@ struct AddCard: View {
     @State private var isHovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            RoundedRectangle(cornerRadius: CardMetrics.thumbnailCornerRadius, style: .continuous)
-                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
-                .foregroundStyle(isHovered ? Color.accentColor : .secondary)
-                .frame(height: CardMetrics.thumbnailHeight)
-                .frame(maxWidth: .infinity)
-                .overlay(
+        RoundedRectangle(cornerRadius: CardMetrics.cornerRadius, style: .continuous)
+            .fill(.quaternary.opacity(isHovered ? 0.55 : 0.3))
+            .overlay(
+                RoundedRectangle(cornerRadius: CardMetrics.cornerRadius, style: .continuous)
+                    .strokeBorder(
+                        isHovered ? Color.accentColor : Color.secondary.opacity(0.5),
+                        style: StrokeStyle(lineWidth: 1.5, dash: [6, 4])
+                    )
+            )
+            .overlay(
+                VStack(spacing: 6) {
                     Image(systemName: "plus")
-                        .font(.system(size: 22, weight: .medium))
-                        .foregroundStyle(isHovered ? Color.accentColor : .secondary)
-                )
-
-            Text("Add Wallpaper")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(8)
-        .frame(width: CardMetrics.width)
-        .background(
-            RoundedRectangle(cornerRadius: CardMetrics.cornerRadius, style: .continuous)
-                .fill(.quaternary.opacity(isHovered ? 0.5 : 0.25))
-        )
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onTap)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.12)) { isHovered = hovering }
-        }
+                        .font(.system(size: 20, weight: .medium))
+                    Text("Add Wallpaper")
+                        .font(.system(size: 11))
+                }
+                .foregroundStyle(isHovered ? Color.accentColor : .secondary)
+            )
+            .frame(width: CardMetrics.width, height: CardMetrics.height)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onTap)
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.14)) { isHovered = hovering }
+            }
     }
 }

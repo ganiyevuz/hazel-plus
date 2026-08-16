@@ -30,7 +30,7 @@ struct ManagementView: View {
     @State private var compressionProgress: Float = 0
     @State private var compressionResult: String?
 
-    private let columns = [GridItem(.adaptive(minimum: 168), spacing: 12, alignment: .top)]
+    private let columns = [GridItem(.adaptive(minimum: 208), spacing: 14, alignment: .top)]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -191,7 +191,7 @@ struct ManagementView: View {
 
     private var library: some View {
         ScrollView {
-            LazyVGrid(columns: columns, spacing: 12) {
+            LazyVGrid(columns: columns, spacing: 14) {
                 AddCard { showingFileImporter = true }
 
                 ForEach(store.wallpapers) { item in
