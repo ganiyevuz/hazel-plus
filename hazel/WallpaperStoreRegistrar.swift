@@ -327,6 +327,14 @@ final class WallpaperStoreRegistrar {
         var assets = manifest["assets"] as? [[String: Any]] ?? []
         var categories = manifest["categories"] as? [[String: Any]] ?? []
 
+        // Files are only ever deleted for assets Hazel itself registered. Proving
+        // ownership from the filesystem is impossible: Hazel's layout was copied
+        // from Backdrop, so Backdrop's own videos/thumbnails look identical.
+        let previouslyRegistered = Set(assets.compactMap { asset -> String? in
+            guard (asset["categories"] as? [String])?.contains(Self.categoryID) == true else { return nil }
+            return asset["id"] as? String
+        })
+
         // Drop everything Hazel previously added, so removals and renames take effect.
         assets.removeAll { ($0["categories"] as? [String])?.contains(Self.categoryID) == true }
         categories.removeAll { ($0["id"] as? String) == Self.categoryID }
@@ -363,7 +371,8 @@ final class WallpaperStoreRegistrar {
             return
         }
 
-        removeOrphans(keeping: Set(registered.map { $0.item.id.uuidString }))
+        removeOrphans(previouslyRegistered: previouslyRegistered,
+                      keeping: Set(registered.map { $0.item.id.uuidString }))
         reloadWallpaperAgent()
         log.info("registered \(registered.count) wallpapers")
     }
@@ -375,45 +384,34 @@ final class WallpaperStoreRegistrar {
 
         var assets = manifest["assets"] as? [[String: Any]] ?? []
         var categories = manifest["categories"] as? [[String: Any]] ?? []
+
+        let previouslyRegistered = Set(assets.compactMap { asset -> String? in
+            guard (asset["categories"] as? [String])?.contains(Self.categoryID) == true else { return nil }
+            return asset["id"] as? String
+        })
+
         assets.removeAll { ($0["categories"] as? [String])?.contains(Self.categoryID) == true }
         categories.removeAll { ($0["id"] as? String) == Self.categoryID }
         manifest["assets"] = assets
         manifest["categories"] = categories
 
         try? writeManifest(manifest)
-        removeOrphans(keeping: [])
+        removeOrphans(previouslyRegistered: previouslyRegistered, keeping: [])
         reloadWallpaperAgent()
     }
 
-    /// Deletes prepared videos and thumbnails whose wallpaper is no longer in the
-    /// library. Without this, deleting a wallpaper leaks its prepared copy forever.
-    private func removeOrphans(keeping ids: Set<String>) {
-        // Identify every orphan BEFORE deleting anything. Ownership is proven by
-        // the video/thumbnail PAIR, so deleting videos in a first pass would make
-        // their thumbnails look un-owned in a second pass and leak them forever.
-        let names = (try? fileManager.contentsOfDirectory(at: videosURL, includingPropertiesForKeys: nil))?
-            .filter { $0.pathExtension == "mov" }
-            .map { $0.deletingPathExtension().lastPathComponent } ?? []
-
-        // Only ever touch files named after a UUID we could have written, that the
-        // library no longer contains, and that carry both halves of a Hazel pair.
-        // Apple's downloaded aerials and other apps' assets live here too.
-        let orphans = names.filter { UUID(uuidString: $0) != nil && !ids.contains($0) && isHazelOwned($0) }
-
-        for name in orphans {
+    /// Deletes prepared files for assets Hazel previously registered and no longer
+    /// has in its library.
+    ///
+    /// Ownership comes from the manifest, never from the filesystem: this directory
+    /// also holds Apple's downloaded aerials and other apps' assets (Backdrop keeps
+    /// a 210 MB video here), and those are indistinguishable from Hazel's by name
+    /// or by file layout — Hazel's layout was copied from Backdrop's.
+    private func removeOrphans(previouslyRegistered: Set<String>, keeping ids: Set<String>) {
+        for name in previouslyRegistered.subtracting(ids) {
             try? fileManager.removeItem(at: videosURL.appendingPathComponent("\(name).mov"))
             try? fileManager.removeItem(at: thumbnailsURL.appendingPathComponent("\(name).png"))
         }
-    }
-
-    /// Hazel only ever writes files named after a WallpaperItem id, and always
-    /// writes both a video and a thumbnail. Apple's downloaded aerials have no
-    /// matching thumbnail/video pair created by us, so requiring the pair keeps
-    /// cleanup from deleting Apple's content.
-    private func isHazelOwned(_ name: String) -> Bool {
-        let video = videosURL.appendingPathComponent("\(name).mov")
-        let thumbnail = thumbnailsURL.appendingPathComponent("\(name).png")
-        return fileManager.fileExists(atPath: video.path) && fileManager.fileExists(atPath: thumbnail.path)
     }
 
     /// WallpaperAgent caches the manifest; restarting it is the only reliable way
