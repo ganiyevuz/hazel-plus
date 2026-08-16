@@ -16,6 +16,8 @@ struct WallpaperCard: View {
     let onRemove: () -> Void
     let onToggleLoop: () -> Void
     let onToggleMute: () -> Void
+    let onTogglePingPong: () -> Void
+    let onCompress: () -> Void
 
     @State private var thumbnailImage: NSImage?
     @State private var isHovered = false
@@ -44,7 +46,14 @@ struct WallpaperCard: View {
         }
         .contextMenu {
             Button(item.isLooping ? "Disable Loop" : "Enable Loop", systemImage: "repeat", action: onToggleLoop)
+            Button(item.isPingPong ? "Normal Loop" : "Reverse Loop",
+                   systemImage: item.isPingPong ? "arrow.right" : "arrow.left.arrow.right",
+                   action: onTogglePingPong)
+                // Ping-pong drives the rate by hand, which needs looping on.
+                .disabled(!item.isLooping)
             Button(item.isMuted ? "Unmute" : "Mute", systemImage: item.isMuted ? "speaker.slash" : "speaker.wave.2", action: onToggleMute)
+            Divider()
+            Button("Compress for This Mac…", systemImage: "arrow.down.circle", action: onCompress)
             Divider()
             Button("Remove", systemImage: "trash", role: .destructive, action: onRemove)
         }
@@ -93,6 +102,9 @@ struct WallpaperCard: View {
             // Only surface the non-default states, so the row stays quiet.
             if !item.isLooping {
                 Image(systemName: "repeat.1").font(.caption2).foregroundStyle(.secondary)
+            }
+            if item.isPingPong {
+                Image(systemName: "arrow.left.arrow.right").font(.caption2).foregroundStyle(.secondary)
             }
             if !item.isMuted {
                 Image(systemName: "speaker.wave.2.fill").font(.caption2).foregroundStyle(.secondary)

@@ -165,7 +165,7 @@ class WallpaperController: ObservableObject {
         }
 
         for (_, entry) in wallpaperWindows {
-            entry.playerView.loadVideo(url: url, isLooping: activeItem.isLooping, isMuted: activeItem.isMuted, fit: store.wallpaperFit)
+            entry.playerView.loadVideo(url: url, isLooping: activeItem.isLooping, isMuted: activeItem.isMuted, isPingPong: activeItem.isPingPong, fit: store.wallpaperFit)
         }
 
         // Put a still of this video underneath, so the desktop macOS composites
@@ -202,7 +202,7 @@ class WallpaperController: ObservableObject {
               let url = store.resolveBookmark(activeItem.url) else { return }
 
         for (_, entry) in wallpaperWindows {
-            entry.playerView.loadVideo(url: url, isLooping: activeItem.isLooping, isMuted: activeItem.isMuted, fit: store.wallpaperFit)
+            entry.playerView.loadVideo(url: url, isLooping: activeItem.isLooping, isMuted: activeItem.isMuted, isPingPong: activeItem.isPingPong, fit: store.wallpaperFit)
         }
     }
 }

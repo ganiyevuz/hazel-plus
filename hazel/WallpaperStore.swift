@@ -170,6 +170,13 @@ class WallpaperStore: ObservableObject {
         }
     }
 
+    func togglePingPong(for item: WallpaperItem) {
+        if let index = wallpapers.firstIndex(where: { $0.id == item.id }) {
+            wallpapers[index].isPingPong.toggle()
+            save()
+        }
+    }
+
     func toggleMute(for item: WallpaperItem) {
         if let index = wallpapers.firstIndex(where: { $0.id == item.id }) {
             wallpapers[index].isMuted.toggle()

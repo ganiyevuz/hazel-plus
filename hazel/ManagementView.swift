@@ -26,6 +26,9 @@ struct ManagementView: View {
     @State private var screenSaverSelection: ScreenSaverSelection = .unknown
     @State private var showingRemoveConfirmation = false
     @State private var showingRemoveFailure = false
+    @State private var compressingTitle: String?
+    @State private var compressionProgress: Float = 0
+    @State private var compressionResult: String?
 
     private let columns = [GridItem(.adaptive(minimum: 168), spacing: 12, alignment: .top)]
 
@@ -33,6 +36,10 @@ struct ManagementView: View {
         VStack(spacing: 0) {
             toolbar
             Divider()
+            if let compressingTitle {
+                compressionBanner(for: compressingTitle)
+                Divider()
+            }
             library
         }
         .frame(minWidth: 560, idealWidth: 640, minHeight: 360, idealHeight: 460)
@@ -65,6 +72,14 @@ struct ManagementView: View {
             // Says the entries come back, because syncWallpaperStore() runs on
             // launch, import and delete — without this the action reads as broken.
             Text("Your videos stay in Hazel. This only removes the \"Hazel\" section from System Settings → Wallpaper → Screen Saver.\n\nHazel re-adds it the next time it launches or you change your library, so use this before uninstalling.")
+        }
+        .alert("Compression", isPresented: Binding(
+            get: { compressionResult != nil },
+            set: { if !$0 { compressionResult = nil } }
+        )) {
+            Button("OK", role: .cancel) { compressionResult = nil }
+        } message: {
+            Text(compressionResult ?? "")
         }
         .alert("Couldn't remove Hazel wallpapers", isPresented: $showingRemoveFailure) {
             Button("OK", role: .cancel) { }
@@ -208,7 +223,15 @@ struct ManagementView: View {
                                let updatedItem = store.wallpapers.first(where: { $0.id == item.id }) {
                                 controller.setWallpaper(updatedItem)
                             }
-                        }
+                        },
+                        onTogglePingPong: {
+                            store.togglePingPong(for: item)
+                            if store.activeWallpaperID == item.id,
+                               let updatedItem = store.wallpapers.first(where: { $0.id == item.id }) {
+                                controller.setWallpaper(updatedItem)
+                            }
+                        },
+                        onCompress: { compress(item) }
                     )
                 }
             }
@@ -217,6 +240,55 @@ struct ManagementView: View {
     }
 
     // MARK: - Actions
+
+    /// Shown while a re-encode runs, so a multi-minute export is never silent.
+    private func compressionBanner(for title: String) -> some View {
+        HStack(spacing: 10) {
+            ProgressView(value: compressionProgress)
+                .progressViewStyle(.linear)
+                .frame(maxWidth: 200)
+            Text("Compressing \(title)…")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer()
+            Text("\(Int(compressionProgress * 100))%")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    private func compress(_ item: WallpaperItem) {
+        guard compressingTitle == nil else { return }
+        compressingTitle = item.title
+        compressionProgress = 0
+
+        VideoCompressor.compress(item: item) { fraction in
+            compressionProgress = fraction
+        } completion: { outcome in
+            compressingTitle = nil
+
+            switch outcome {
+            case .compressed(let savings):
+                let before = ByteCountFormatter.string(fromByteCount: savings.originalBytes, countStyle: .file)
+                let after = ByteCountFormatter.string(fromByteCount: savings.compressedBytes, countStyle: .file)
+                compressionResult = "\(before) → \(after), \(savings.percentSaved)% smaller."
+                // The prepared copy in Apple's store is now stale; a sync
+                // re-prepares it because the source is newer.
+                store.syncWallpaperStore()
+                if store.activeWallpaperID == item.id,
+                   let updated = store.wallpapers.first(where: { $0.id == item.id }) {
+                    controller.setWallpaper(updated)
+                }
+            case .alreadyOptimal(let size):
+                compressionResult = "Already a good fit at \(Int(size.width))×\(Int(size.height)) — left unchanged."
+            case .failed(let message):
+                compressionResult = message
+            }
+        }
+    }
 
     private func removeFromSystemSettings() {
         WallpaperStoreRegistrar.shared.removeAll { succeeded in
