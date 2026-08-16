@@ -32,8 +32,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         setupStatusItem()
+        installScreenSaverIfNeeded()
 
         managementWindowController = ManagementWindowController()
+    }
+
+    private func installScreenSaverIfNeeded() {
+        guard let bundledSaverURL = Bundle.main.url(forResource: "Hazel", withExtension: "saver") else {
+            print("Hazel.saver not found in app bundle")
+            return
+        }
+
+        let screenSaversDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Screen Savers", isDirectory: true)
+        let installedURL = screenSaversDir.appendingPathComponent("Hazel.saver")
+
+        do {
+            try FileManager.default.createDirectory(at: screenSaversDir, withIntermediateDirectories: true)
+
+            if FileManager.default.fileExists(atPath: installedURL.path) {
+                try FileManager.default.removeItem(at: installedURL)
+            }
+
+            try FileManager.default.copyItem(at: bundledSaverURL, to: installedURL)
+        } catch {
+            print("Failed to install screen saver: \(error)")
+        }
     }
     
     private func registerFonts() {
