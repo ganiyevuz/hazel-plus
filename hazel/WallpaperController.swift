@@ -165,7 +165,7 @@ class WallpaperController: ObservableObject {
         }
 
         for (_, entry) in wallpaperWindows {
-            entry.playerView.loadVideo(url: url, isLooping: activeItem.isLooping, isMuted: activeItem.isMuted, isPingPong: activeItem.isPingPong, fit: store.wallpaperFit)
+            entry.playerView.loadVideo(url: playbackURL(for: activeItem, source: url), isLooping: activeItem.isLooping, isMuted: activeItem.isMuted, fit: store.wallpaperFit)
         }
 
         // Put a still of this video underneath, so the desktop macOS composites
@@ -181,6 +181,14 @@ class WallpaperController: ObservableObject {
         }
 
         DesktopPictureBridge.shared.restore()
+    }
+
+    /// Ping-pong plays a pre-rendered forward+reversed file. Real-time reverse
+    /// playback decodes at single-digit fps, because most frames are stored as
+    /// differences from earlier ones — so the reversal is rendered once instead.
+    private func playbackURL(for item: WallpaperItem, source: URL) -> URL {
+        guard item.isPingPong, PingPongRenderer.hasCurrentRender(for: item) else { return source }
+        return PingPongRenderer.renderedURL(for: item)
     }
 
     func pauseAll() {
@@ -202,7 +210,7 @@ class WallpaperController: ObservableObject {
               let url = store.resolveBookmark(activeItem.url) else { return }
 
         for (_, entry) in wallpaperWindows {
-            entry.playerView.loadVideo(url: url, isLooping: activeItem.isLooping, isMuted: activeItem.isMuted, isPingPong: activeItem.isPingPong, fit: store.wallpaperFit)
+            entry.playerView.loadVideo(url: playbackURL(for: activeItem, source: url), isLooping: activeItem.isLooping, isMuted: activeItem.isMuted, fit: store.wallpaperFit)
         }
     }
 }

@@ -6,7 +6,6 @@ class VideoPlayerView: NSView {
     private var currentURL: URL?
     private var currentIsLooping: Bool = true
     private var currentIsMuted: Bool = true
-    private var currentIsPingPong: Bool = false
     private var currentFit: WallpaperFit = .fill
 
     var isPlaying: Bool {
@@ -23,14 +22,13 @@ class VideoPlayerView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func loadVideo(url: URL, isLooping: Bool = true, isMuted: Bool = true, isPingPong: Bool = false, fit: WallpaperFit) {
+    func loadVideo(url: URL, isLooping: Bool = true, isMuted: Bool = true, fit: WallpaperFit) {
         currentURL = url
         currentIsLooping = isLooping
         currentIsMuted = isMuted
-        currentIsPingPong = isPingPong
         currentFit = fit
 
-        playerCore.load(url: url, isLooping: isLooping, isMuted: isMuted, isPingPong: isPingPong, fit: fit, bounds: bounds)
+        playerCore.load(url: url, isLooping: isLooping, isMuted: isMuted, fit: fit, bounds: bounds)
         if let playerLayer = playerCore.layer {
             layer?.addSublayer(playerLayer)
         }
@@ -44,7 +42,7 @@ class VideoPlayerView: NSView {
 
     func reloadWithSettings() {
         guard let url = currentURL else { return }
-        loadVideo(url: url, isLooping: currentIsLooping, isMuted: currentIsMuted, isPingPong: currentIsPingPong, fit: currentFit)
+        loadVideo(url: url, isLooping: currentIsLooping, isMuted: currentIsMuted, fit: currentFit)
     }
 
     func play() {

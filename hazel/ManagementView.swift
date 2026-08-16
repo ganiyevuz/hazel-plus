@@ -224,13 +224,7 @@ struct ManagementView: View {
                                 controller.setWallpaper(updatedItem)
                             }
                         },
-                        onTogglePingPong: {
-                            store.togglePingPong(for: item)
-                            if store.activeWallpaperID == item.id,
-                               let updatedItem = store.wallpapers.first(where: { $0.id == item.id }) {
-                                controller.setWallpaper(updatedItem)
-                            }
-                        },
+                        onTogglePingPong: { togglePingPong(item) },
                         onCompress: { compress(item) }
                     )
                 }
@@ -258,6 +252,42 @@ struct ManagementView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+    }
+
+    /// Turning ping-pong on renders a forward+reversed copy once; turning it off
+    /// is instant. The render is what makes playback smooth — reversing in real
+    /// time drops to single-digit fps because of how video compression works.
+    private func togglePingPong(_ item: WallpaperItem) {
+        let enabling = !item.isPingPong
+
+        guard enabling, !PingPongRenderer.hasCurrentRender(for: item) else {
+            store.togglePingPong(for: item)
+            reloadIfActive(item)
+            return
+        }
+
+        guard compressingTitle == nil else { return }
+        compressingTitle = "\(item.title) (reverse loop)"
+        compressionProgress = 0
+
+        PingPongRenderer.render(item: item) { fraction in
+            compressionProgress = fraction
+        } completion: { outcome in
+            compressingTitle = nil
+            switch outcome {
+            case .rendered:
+                store.togglePingPong(for: item)
+                reloadIfActive(item)
+            case .failed(let message):
+                compressionResult = message
+            }
+        }
+    }
+
+    private func reloadIfActive(_ item: WallpaperItem) {
+        guard store.activeWallpaperID == item.id,
+              let updated = store.wallpapers.first(where: { $0.id == item.id }) else { return }
+        controller.setWallpaper(updated)
     }
 
     private func compress(_ item: WallpaperItem) {
