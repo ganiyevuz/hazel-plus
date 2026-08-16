@@ -1,3 +1,4 @@
+import AppKit
 import AVFoundation
 import Foundation
 import OSLog
@@ -208,5 +209,65 @@ final class WallpaperStoreRegistrar {
             return false
         }
         return destinationDate >= sourceDate
+    }
+
+    // MARK: - Thumbnails
+
+    /// Writes `aerials/thumbnails/<item.id>.png` from the video's frame at 2s.
+    ///
+    /// Deliberately separate from WallpaperStore's cached thumbnails: those live
+    /// in ~/Library/Caches (purgeable, which would break the manifest's
+    /// previewImage) and are 440x248, too small for System Settings' tiles.
+    func prepareThumbnail(for item: WallpaperItem) -> URL? {
+        try? fileManager.createDirectory(at: thumbnailsURL, withIntermediateDirectories: true)
+        let destination = thumbnailsURL.appendingPathComponent("\(item.id.uuidString).png")
+
+        if fileManager.fileExists(atPath: destination.path) {
+            return destination
+        }
+
+        let asset = AVURLAsset(url: item.url)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 1600, height: 900)
+
+        var image: CGImage?
+        let semaphore = DispatchSemaphore(value: 0)
+        let preferred = CMTime(seconds: 2, preferredTimescale: 600)
+
+        generator.generateCGImagesAsynchronously(forTimes: [NSValue(time: preferred)]) { _, cgImage, _, _, _ in
+            image = cgImage
+            semaphore.signal()
+        }
+        _ = semaphore.wait(timeout: .now() + 10)
+
+        // Clips shorter than 2s yield nothing at that timestamp; fall back to frame zero.
+        if image == nil {
+            let fallbackSemaphore = DispatchSemaphore(value: 0)
+            generator.generateCGImagesAsynchronously(forTimes: [NSValue(time: .zero)]) { _, cgImage, _, _, _ in
+                image = cgImage
+                fallbackSemaphore.signal()
+            }
+            _ = fallbackSemaphore.wait(timeout: .now() + 10)
+        }
+
+        guard let cgImage = image else {
+            log.error("thumbnail generation failed for \(item.title, privacy: .public)")
+            return nil
+        }
+
+        let bitmap = NSBitmapImageRep(cgImage: cgImage)
+        guard let pngData = bitmap.representation(using: .png, properties: [:]) else {
+            log.error("PNG encoding failed for \(item.title, privacy: .public)")
+            return nil
+        }
+
+        do {
+            try pngData.write(to: destination)
+            return destination
+        } catch {
+            log.error("thumbnail write failed: \(String(describing: error), privacy: .public)")
+            return nil
+        }
     }
 }
