@@ -8,27 +8,8 @@ enum WallpaperLibraryReader {
         let fit: WallpaperFit
     }
 
-    /// The user's real home directory, bypassing any sandbox container redirection.
-    ///
-    /// The screen saver is loaded into Apple's `legacyScreenSaver` app extension, which
-    /// is sandboxed (container `com.apple.ScreenSaver.Engine.legacyScreenSaver`) even
-    /// though Hazel itself is not. Inside it, `NSHomeDirectory()` and
-    /// `FileManager.urls(for:in:)` resolve to *that extension's* container, so they
-    /// never find `~/Library/Application Support/LiveWallpaper`. The passwd database
-    /// still reports the real home, and the extension holds a read-only exception for
-    /// `/`, so an absolute path built this way reads fine from both processes.
-    private static var realHomeDirectory: URL {
-        if let pw = getpwuid(getuid()) {
-            let dir = String(cString: pw.pointee.pw_dir)
-            if !dir.isEmpty {
-                return URL(fileURLWithPath: dir, isDirectory: true)
-            }
-        }
-        return FileManager.default.homeDirectoryForCurrentUser
-    }
-
     private static var storageURL: URL {
-        realHomeDirectory.appendingPathComponent("Library/Application Support/LiveWallpaper/wallpapers.json")
+        RealHomeDirectory.url.appendingPathComponent("Library/Application Support/LiveWallpaper/wallpapers.json")
     }
 
     static func currentSelection() -> Selection? {

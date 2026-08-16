@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		88C0F7C13031B26200600E38 /* Hazel.saver in Resources */ = {isa = PBXBuildFile; fileRef = 88C0F7B43031B26200600E38 /* Hazel.saver */; };
+		88C0F7C13031B26200600E38 /* Hazel.saver in Embed Screen Saver */ = {isa = PBXBuildFile; fileRef = 88C0F7B43031B26200600E38 /* Hazel.saver */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -27,7 +27,7 @@
 			dstPath = "";
 			dstSubfolderSpec = 7;
 			files = (
-				88C0F7C13031B26200600E38 /* Hazel.saver in Resources */,
+				88C0F7C13031B26200600E38 /* Hazel.saver in Embed Screen Saver */,
 			);
 			name = "Embed Screen Saver";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -43,6 +43,7 @@
 		88C0F7C03031B26200600E38 /* Exceptions for "hazel" folder in "HazelScreenSaver" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				RealHomeDirectory.swift,
 				WallpaperFit.swift,
 				WallpaperItem.swift,
 				WallpaperLibraryFile.swift,
