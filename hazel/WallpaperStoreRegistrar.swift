@@ -274,4 +274,155 @@ final class WallpaperStoreRegistrar {
             return nil
         }
     }
+
+    // MARK: - Manifest entries
+
+    private func assetEntry(for item: WallpaperItem, video: URL, thumbnail: URL) -> [String: Any] {
+        let assetID = item.id.uuidString
+        let shotID = "CUSTOM_\(assetID.replacingOccurrences(of: "-", with: "_"))"
+        return [
+            "id": assetID,
+            "categories": [Self.categoryID],
+            "subcategories": [Self.subcategoryID],
+            "pointsOfInterest": ["0": "\(shotID)_0"],
+            "shotID": shotID,
+            "includeInShuffle": true,
+            "previewImage": thumbnail.absoluteString,
+            "accessibilityLabel": item.title,
+            "localizedNameKey": item.title,
+            "preferredOrder": 0,
+            "url-4K-SDR-240FPS": video.absoluteString,
+            "showInTopLevel": true,
+        ]
+    }
+
+    private func categoryEntry(representativeID: String, thumbnail: URL) -> [String: Any] {
+        [
+            "id": Self.categoryID,
+            "localizedNameKey": Self.sectionName,
+            "localizedDescriptionKey": Self.sectionDescription,
+            "previewImage": thumbnail.absoluteString,
+            "preferredOrder": 99,
+            "representativeAssetID": representativeID,
+            "subcategories": [[
+                "id": Self.subcategoryID,
+                "localizedNameKey": Self.sectionName,
+                "localizedDescriptionKey": Self.sectionDescription,
+                "preferredOrder": 0,
+                "representativeAssetID": representativeID,
+                "previewImage": thumbnail.absoluteString,
+            ]],
+        ]
+    }
+
+    // MARK: - Sync
+
+    /// Makes the store reflect `library` exactly. Idempotent — safe on every launch.
+    func sync(library: [WallpaperItem], activeID: UUID?) {
+        guard var manifest = readManifest() else { return }
+        backupIfNeeded()
+
+        let before = try? JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
+
+        var assets = manifest["assets"] as? [[String: Any]] ?? []
+        var categories = manifest["categories"] as? [[String: Any]] ?? []
+
+        // Drop everything Hazel previously added, so removals and renames take effect.
+        assets.removeAll { ($0["categories"] as? [String])?.contains(Self.categoryID) == true }
+        categories.removeAll { ($0["id"] as? String) == Self.categoryID }
+
+        var registered: [(item: WallpaperItem, thumbnail: URL)] = []
+        for item in library {
+            guard let video = prepareVideo(for: item),
+                  let thumbnail = prepareThumbnail(for: item) else {
+                log.error("skipping \(item.title, privacy: .public) — preparation failed")
+                continue
+            }
+            assets.append(assetEntry(for: item, video: video, thumbnail: thumbnail))
+            registered.append((item, thumbnail))
+        }
+
+        if let representative = registered.first(where: { $0.item.id == activeID }) ?? registered.first {
+            categories.append(categoryEntry(representativeID: representative.item.id.uuidString,
+                                            thumbnail: representative.thumbnail))
+        }
+
+        manifest["assets"] = assets
+        manifest["categories"] = categories
+
+        let after = try? JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
+        guard before != after else {
+            log.info("wallpaper store already up to date")
+            return
+        }
+
+        do {
+            try writeManifest(manifest)
+        } catch {
+            log.error("manifest write failed: \(String(describing: error), privacy: .public)")
+            return
+        }
+
+        removeOrphans(keeping: Set(registered.map { $0.item.id.uuidString }))
+        reloadWallpaperAgent()
+        log.info("registered \(registered.count) wallpapers")
+    }
+
+    /// Removes every Hazel entry and prepared file from the store.
+    func removeAll() {
+        guard var manifest = readManifest() else { return }
+        backupIfNeeded()
+
+        var assets = manifest["assets"] as? [[String: Any]] ?? []
+        var categories = manifest["categories"] as? [[String: Any]] ?? []
+        assets.removeAll { ($0["categories"] as? [String])?.contains(Self.categoryID) == true }
+        categories.removeAll { ($0["id"] as? String) == Self.categoryID }
+        manifest["assets"] = assets
+        manifest["categories"] = categories
+
+        try? writeManifest(manifest)
+        removeOrphans(keeping: [])
+        reloadWallpaperAgent()
+    }
+
+    /// Deletes prepared videos and thumbnails whose wallpaper is no longer in the
+    /// library. Without this, deleting a wallpaper leaks its prepared copy forever.
+    private func removeOrphans(keeping ids: Set<String>) {
+        // Identify every orphan BEFORE deleting anything. Ownership is proven by
+        // the video/thumbnail PAIR, so deleting videos in a first pass would make
+        // their thumbnails look un-owned in a second pass and leak them forever.
+        let names = (try? fileManager.contentsOfDirectory(at: videosURL, includingPropertiesForKeys: nil))?
+            .filter { $0.pathExtension == "mov" }
+            .map { $0.deletingPathExtension().lastPathComponent } ?? []
+
+        // Only ever touch files named after a UUID we could have written, that the
+        // library no longer contains, and that carry both halves of a Hazel pair.
+        // Apple's downloaded aerials and other apps' assets live here too.
+        let orphans = names.filter { UUID(uuidString: $0) != nil && !ids.contains($0) && isHazelOwned($0) }
+
+        for name in orphans {
+            try? fileManager.removeItem(at: videosURL.appendingPathComponent("\(name).mov"))
+            try? fileManager.removeItem(at: thumbnailsURL.appendingPathComponent("\(name).png"))
+        }
+    }
+
+    /// Hazel only ever writes files named after a WallpaperItem id, and always
+    /// writes both a video and a thumbnail. Apple's downloaded aerials have no
+    /// matching thumbnail/video pair created by us, so requiring the pair keeps
+    /// cleanup from deleting Apple's content.
+    private func isHazelOwned(_ name: String) -> Bool {
+        let video = videosURL.appendingPathComponent("\(name).mov")
+        let thumbnail = thumbnailsURL.appendingPathComponent("\(name).png")
+        return fileManager.fileExists(atPath: video.path) && fileManager.fileExists(atPath: thumbnail.path)
+    }
+
+    /// WallpaperAgent caches the manifest; restarting it is the only reliable way
+    /// to make changes visible. It relaunches automatically. Only called when the
+    /// manifest actually changed, since a restart is user-visible.
+    private func reloadWallpaperAgent() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
+        process.arguments = ["WallpaperAgent"]
+        try? process.run()
+    }
 }
