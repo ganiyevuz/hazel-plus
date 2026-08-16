@@ -18,15 +18,19 @@ struct ManagementView: View {
     @State private var showingErrorAlert = false
     @State private var errorMessage = ""
     @State private var duplicateVideoName = ""
-    
+    @State private var screenSaverSelection: ScreenSaverSelection = .unknown
+
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(alignment: .leading, spacing: 14) {
             headerSection
-            Spacer()
-            wallpaperScrollView
+            homeScreenSection
+            screenSaverSection
+            lockScreenSection
+            Spacer(minLength: 0)
         }
         .padding(.vertical, 20)
-        .frame(width: 600, height: 340)
+        .frame(width: 600, height: 520)
+        .onAppear { refreshScreenSaverSelection() }
         .background(Color.black)
         .alert("Wallpaper Already Exists", isPresented: $showingDuplicateAlert) {
             Button("OK", role: .cancel) { }
@@ -134,11 +138,111 @@ struct ManagementView: View {
                 }
             }
             .padding(.horizontal, 20)
-            .padding(.bottom, 50)
+            .padding(.bottom, 8)
         }
     }
-    
-    
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.custom("GeistPixel-Square", size: 13))
+            .foregroundColor(.gray)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 20)
+    }
+
+    private var homeScreenSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("Home Screen")
+            wallpaperScrollView
+        }
+    }
+
+    private var screenSaverSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("Screen Saver")
+            HStack(spacing: 12) {
+                screenSaverStatusView
+                Spacer()
+                Button("Open System Settings…") {
+                    openScreenSaverSettings()
+                }
+                .font(.custom("GeistPixel-Square", size: 12))
+            }
+            .padding(.horizontal, 20)
+        }
+    }
+
+    @ViewBuilder
+    private var screenSaverStatusView: some View {
+        switch screenSaverSelection {
+        case .hazelWallpaper(let id):
+            if let item = store.wallpapers.first(where: { $0.id == id }) {
+                HStack(spacing: 10) {
+                    if let image = store.loadThumbnailImage(for: item) {
+                        Image(nsImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 64, height: 36)
+                            .clipped()
+                            .cornerRadius(4)
+                    }
+                    Text(item.title)
+                        .font(.custom("GeistPixel-Square", size: 12))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                }
+            } else {
+                Text("Set to a Hazel wallpaper")
+                    .font(.custom("GeistPixel-Square", size: 12))
+                    .foregroundColor(.white)
+            }
+        case .otherApp:
+            Text("Set to another app's wallpaper")
+                .font(.custom("GeistPixel-Square", size: 12))
+                .foregroundColor(.gray)
+        case .notAnAerial:
+            Text("Not set to a Hazel wallpaper")
+                .font(.custom("GeistPixel-Square", size: 12))
+                .foregroundColor(.gray)
+        case .unknown:
+            Text("Couldn't read the current screen saver")
+                .font(.custom("GeistPixel-Square", size: 12))
+                .foregroundColor(.gray)
+        }
+    }
+
+    private var lockScreenSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("Lock Screen")
+            Text("Follows your Screen Saver — macOS has no separate lock screen wallpaper.")
+                .font(.custom("GeistPixel-Square", size: 12))
+                .foregroundColor(.gray)
+                .padding(.horizontal, 20)
+        }
+    }
+
+    /// Reading a small plist is fast enough to do inline; keeping it synchronous
+    /// avoids a state race between the read finishing and the view redrawing.
+    private func refreshScreenSaverSelection() {
+        screenSaverSelection = WallpaperStoreRegistrar.shared
+            .currentScreenSaverSelection(library: store.wallpapers)
+    }
+
+    /// Opens System Settings at the Screen Saver pane. If the deep link is not
+    /// honoured on this macOS version, fall back to opening System Settings
+    /// unscoped — never leave the user with a button that does nothing.
+    private func openScreenSaverSettings() {
+        if let paneURL = URL(string: "x-apple.systempreferences:com.apple.ScreenSaver-Settings.extension"),
+           NSWorkspace.shared.open(paneURL) {
+            return
+        }
+        if let appURL = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: "com.apple.systempreferences") {
+            NSWorkspace.shared.openApplication(at: appURL,
+                                               configuration: NSWorkspace.OpenConfiguration())
+        }
+    }
+
     private func handleFileImport(_ result: Result<[URL], Error>) {
         switch result {
         case .success(let urls):
@@ -189,7 +293,7 @@ class ManagementWindowController: NSObject, NSWindowDelegate {
         
         // Modern macOS Window Styling
         let newPanel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 600, height: 340),
+            contentRect: NSRect(x: 0, y: 0, width: 600, height: 520),
             styleMask: [.titled, .closable, .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered,
             defer: false
