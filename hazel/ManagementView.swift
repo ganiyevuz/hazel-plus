@@ -4,34 +4,46 @@ import UniformTypeIdentifiers
 
 // MARK: - Constants
 private enum AppConstants {
-    static let githubURL = URL(string: "https://github.com/harryfrzz/hazel")!
+    static let githubURL = URL(string: "https://github.com/ganiyevuz/hazel-plus")!
     static let allowedMovieTypes: [UTType] = [.movie, .mpeg4Movie, .quickTimeMovie]
+
+    /// System Settings deep links. Both fall back to opening System Settings
+    /// unscoped, so a scheme change never leaves a button that does nothing.
+    static let wallpaperPane = "x-apple.systempreferences:com.apple.Wallpaper-Settings.extension"
+    static let screenSaverPane = "x-apple.systempreferences:com.apple.ScreenSaver-Settings.extension"
 }
 
 // MARK: - View
 struct ManagementView: View {
     @ObservedObject var store: WallpaperStore
     @ObservedObject var controller: WallpaperController
-    
+
     @State private var showingFileImporter = false
     @State private var showingDuplicateAlert = false
     @State private var showingErrorAlert = false
     @State private var errorMessage = ""
     @State private var duplicateVideoName = ""
     @State private var screenSaverSelection: ScreenSaverSelection = .unknown
+    @State private var showingRemoveConfirmation = false
+    @State private var showingRemoveFailure = false
+
+    private let columns = [GridItem(.adaptive(minimum: 168), spacing: 12, alignment: .top)]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            headerSection
-            homeScreenSection
-            screenSaverSection
-            lockScreenSection
-            Spacer(minLength: 0)
+        VStack(spacing: 0) {
+            toolbar
+            Divider()
+            library
         }
-        .padding(.vertical, 20)
-        .frame(width: 600, height: 520)
-        .onAppear { refreshScreenSaverSelection() }
-        .background(Color.black)
+        .frame(minWidth: 560, idealWidth: 640, minHeight: 360, idealHeight: 460)
+        .background(.regularMaterial)
+        .onAppear(perform: refreshScreenSaverSelection)
+        .fileImporter(
+            isPresented: $showingFileImporter,
+            allowedContentTypes: AppConstants.allowedMovieTypes,
+            allowsMultipleSelection: true,
+            onCompletion: handleFileImport
+        )
         .alert("Wallpaper Already Exists", isPresented: $showingDuplicateAlert) {
             Button("OK", role: .cancel) { }
         } message: {
@@ -42,68 +54,131 @@ struct ManagementView: View {
         } message: {
             Text(errorMessage)
         }
+        .confirmationDialog(
+            "Remove Hazel wallpapers from System Settings?",
+            isPresented: $showingRemoveConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Remove", role: .destructive, action: removeFromSystemSettings)
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            // Says the entries come back, because syncWallpaperStore() runs on
+            // launch, import and delete — without this the action reads as broken.
+            Text("Your videos stay in Hazel. This only removes the \"Hazel\" section from System Settings → Wallpaper → Screen Saver.\n\nHazel re-adds it the next time it launches or you change your library, so use this before uninstalling.")
+        }
+        .alert("Couldn't remove Hazel wallpapers", isPresented: $showingRemoveFailure) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("System Settings may still show the \"Hazel\" section. Try again, or remove it after restarting your Mac.")
+        }
     }
-    
-    // MARK: - Subviews
-    
-    private var headerSection: some View {
-        HStack(alignment: .center, spacing: 16) {
-            Image("Logo")
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(height: 120)
-                .padding(.leading, 20)
-            
+
+    // MARK: - Toolbar
+
+    private var toolbar: some View {
+        HStack(spacing: 10) {
+            Text("Hazel")
+                .font(.headline)
+
             Spacer()
-            
-            VStack(alignment: .trailing, spacing: 12) {
-                Text("Hazel")
-                    .font(.custom("GeistPixel-Square", size: 28))
-                    .foregroundColor(.white)
-                
-                Text("v1.1")
-                    .font(.custom("GeistPixel-Square", size: 15))
-                    .foregroundColor(.gray)
-                
-                HStack(spacing: 12) {
+
+            GlassEffectContainer(spacing: 6) {
+                HStack(spacing: 6) {
+                    toolbarButton(
+                        systemImage: "photo",
+                        help: "Open Wallpaper settings"
+                    ) { open(AppConstants.wallpaperPane) }
+
+                    // The dot is the whole former "Screen Saver" section, compressed:
+                    // it lights up only when a Hazel video is the active screen saver.
+                    toolbarButton(
+                        systemImage: "moon.stars",
+                        help: screenSaverHelp,
+                        showsIndicator: isHazelScreenSaverActive
+                    ) { open(AppConstants.screenSaverPane) }
+
                     Link(destination: AppConstants.githubURL) {
-                        Image("GitHubLogo")
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 20, height: 20)
+                        Image(systemName: "chevron.left.forwardslash.chevron.right")
+                            .frame(width: 15, height: 15)
                     }
-                    .padding(8)
-                    .background(Color.white)
-                    .cornerRadius(8)
-                    .help("Visit the GitHub repository")
+                    .buttonStyle(.glass)
+                    .help("View Hazel on GitHub")
+
+                    // Destructive actions live behind a menu, never as a bare
+                    // toolbar icon that can be hit by accident.
+                    Menu {
+                        Button("Remove Hazel Wallpapers from System Settings…",
+                               systemImage: "trash",
+                               role: .destructive) {
+                            showingRemoveConfirmation = true
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .frame(width: 15, height: 15)
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(.glass)
+                    .menuIndicator(.hidden)
+                    .help("More options")
                 }
             }
-            .padding(.trailing, 20)
         }
-        .padding(.top, 20)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
     }
-    
-    private var githubImage: Image {
-        if let url = Bundle.main.url(forResource: "GitHub_Invertocat_Black", withExtension: "png"),
-           let nsImage = NSImage(contentsOf: url) {
-            return Image(nsImage: nsImage)
-        }
-        return Image(systemName: "link")
-    }
-    
-    private var wallpaperScrollView: some View {
-        ScrollView(.horizontal, showsIndicators: true) {
-            HStack(spacing: 16) {
-                AddCard {
-                    showingFileImporter = true
+
+    private func toolbarButton(
+        systemImage: String,
+        help: String,
+        showsIndicator: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .frame(width: 15, height: 15)
+                .overlay(alignment: .topTrailing) {
+                    if showsIndicator {
+                        Circle()
+                            .fill(Color.accentColor)
+                            .frame(width: 5, height: 5)
+                            .offset(x: 5, y: -4)
+                    }
                 }
-                .fileImporter(
-                    isPresented: $showingFileImporter,
-                    allowedContentTypes: AppConstants.allowedMovieTypes,
-                    allowsMultipleSelection: true,
-                    onCompletion: handleFileImport
-                )
-                
+        }
+        .buttonStyle(.glass)
+        .help(help)
+    }
+
+    private var isHazelScreenSaverActive: Bool {
+        if case .hazelWallpaper = screenSaverSelection { return true }
+        return false
+    }
+
+    /// Doubles as the answer to "what about the lock screen?" — macOS has no
+    /// separate lock screen wallpaper, so it follows whatever this is set to.
+    private var screenSaverHelp: String {
+        let state: String
+        switch screenSaverSelection {
+        case .hazelWallpaper(let id):
+            let title = store.wallpapers.first(where: { $0.id == id })?.title
+            state = "Currently: \(title ?? "a Hazel wallpaper")"
+        case .otherApp:
+            state = "Currently: another app's wallpaper"
+        case .notAnAerial:
+            state = "No Hazel wallpaper set"
+        case .unknown:
+            state = "Current setting unavailable"
+        }
+        return "Open Screen Saver settings — \(state). Your lock screen follows this."
+    }
+
+    // MARK: - Library
+
+    private var library: some View {
+        ScrollView {
+            LazyVGrid(columns: columns, spacing: 12) {
+                AddCard { showingFileImporter = true }
+
                 ForEach(store.wallpapers) { item in
                     WallpaperCard(
                         item: item,
@@ -137,103 +212,32 @@ struct ManagementView: View {
                     )
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 8)
+            .padding(16)
         }
     }
 
-    private func sectionHeader(_ title: String) -> some View {
-        Text(title)
-            .font(.custom("GeistPixel-Square", size: 13))
-            .foregroundColor(.gray)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 20)
-    }
+    // MARK: - Actions
 
-    private var homeScreenSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionHeader("Home Screen")
-            wallpaperScrollView
-        }
-    }
-
-    private var screenSaverSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionHeader("Screen Saver")
-            HStack(spacing: 12) {
-                screenSaverStatusView
-                Spacer()
-                Button("Open System Settings…") {
-                    openScreenSaverSettings()
-                }
-                .font(.custom("GeistPixel-Square", size: 12))
+    private func removeFromSystemSettings() {
+        WallpaperStoreRegistrar.shared.removeAll { succeeded in
+            guard !succeeded else {
+                // The tile is gone, so the screen-saver indicator is now stale.
+                refreshScreenSaverSelection()
+                return
             }
-            .padding(.horizontal, 20)
+            showingRemoveFailure = true
         }
     }
 
-    @ViewBuilder
-    private var screenSaverStatusView: some View {
-        switch screenSaverSelection {
-        case .hazelWallpaper(let id):
-            if let item = store.wallpapers.first(where: { $0.id == id }) {
-                HStack(spacing: 10) {
-                    if let image = store.loadThumbnailImage(for: item) {
-                        Image(nsImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 64, height: 36)
-                            .clipped()
-                            .cornerRadius(4)
-                    }
-                    Text(item.title)
-                        .font(.custom("GeistPixel-Square", size: 12))
-                        .foregroundColor(.white)
-                        .lineLimit(1)
-                }
-            } else {
-                Text("Set to a Hazel wallpaper")
-                    .font(.custom("GeistPixel-Square", size: 12))
-                    .foregroundColor(.white)
-            }
-        case .otherApp:
-            Text("Set to another app's wallpaper")
-                .font(.custom("GeistPixel-Square", size: 12))
-                .foregroundColor(.gray)
-        case .notAnAerial:
-            Text("Not set to a Hazel wallpaper")
-                .font(.custom("GeistPixel-Square", size: 12))
-                .foregroundColor(.gray)
-        case .unknown:
-            Text("Couldn't read the current screen saver")
-                .font(.custom("GeistPixel-Square", size: 12))
-                .foregroundColor(.gray)
-        }
-    }
-
-    private var lockScreenSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionHeader("Lock Screen")
-            Text("Follows your Screen Saver — macOS has no separate lock screen wallpaper.")
-                .font(.custom("GeistPixel-Square", size: 12))
-                .foregroundColor(.gray)
-                .padding(.horizontal, 20)
-        }
-    }
-
-    /// Reading a small plist is fast enough to do inline; keeping it synchronous
-    /// avoids a state race between the read finishing and the view redrawing.
     private func refreshScreenSaverSelection() {
         screenSaverSelection = WallpaperStoreRegistrar.shared
             .currentScreenSaverSelection(library: store.wallpapers)
     }
 
-    /// Opens System Settings at the Screen Saver pane. If the deep link is not
-    /// honoured on this macOS version, fall back to opening System Settings
-    /// unscoped — never leave the user with a button that does nothing.
-    private func openScreenSaverSettings() {
-        if let paneURL = URL(string: "x-apple.systempreferences:com.apple.ScreenSaver-Settings.extension"),
-           NSWorkspace.shared.open(paneURL) {
+    /// Opens a System Settings pane, falling back to System Settings itself if
+    /// the deep-link scheme is not honoured on this macOS version.
+    private func open(_ paneURLString: String) {
+        if let paneURL = URL(string: paneURLString), NSWorkspace.shared.open(paneURL) {
             return
         }
         if let appURL = NSWorkspace.shared.urlForApplication(
@@ -248,7 +252,7 @@ struct ManagementView: View {
         case .success(let urls):
             var lastAddedItem: WallpaperItem?
             var hasDuplicate = false
-            
+
             for url in urls {
                 let fileName = url.deletingPathExtension().lastPathComponent
                 if store.wallpapers.contains(where: { $0.title == fileName }) {
@@ -256,21 +260,21 @@ struct ManagementView: View {
                     hasDuplicate = true
                     continue
                 }
-                
+
                 if let item = store.addWallpaper(url: url) {
                     lastAddedItem = item
                 }
             }
-            
+
             if hasDuplicate {
                 showingDuplicateAlert = true
             }
-            
+
             if let itemToActivate = lastAddedItem {
                 store.setActiveWallpaper(itemToActivate)
                 controller.setWallpaper(itemToActivate)
             }
-            
+
         case .failure(let error):
             errorMessage = error.localizedDescription
             showingErrorAlert = true
@@ -281,44 +285,42 @@ struct ManagementView: View {
 // MARK: - Window Controller
 class ManagementWindowController: NSObject, NSWindowDelegate {
     private var panel: NSPanel?
-    
+
     func showPanel(store: WallpaperStore, controller: WallpaperController) {
         if let existingPanel = panel {
             existingPanel.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
-        
+
         let hostingView = NSHostingView(rootView: ManagementView(store: store, controller: controller))
-        
-        // Modern macOS Window Styling
+
         let newPanel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 600, height: 520),
-            styleMask: [.titled, .closable, .fullSizeContentView, .nonactivatingPanel],
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 460),
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
-        
-        newPanel.title = "hazel"
-        newPanel.titleVisibility = .hidden // Hides the text title for a cleaner look
-        newPanel.titlebarAppearsTransparent = true // Merges the titlebar with the content
-        newPanel.isMovableByWindowBackground = true // User can drag the window from anywhere
+
+        newPanel.title = "Hazel"
+        newPanel.titleVisibility = .hidden
+        newPanel.titlebarAppearsTransparent = true
+        newPanel.isMovableByWindowBackground = true
         newPanel.contentView = hostingView
         newPanel.isReleasedWhenClosed = false
-        newPanel.level = .floating // Keeps it above other windows
+        newPanel.level = .floating
         newPanel.center()
         newPanel.delegate = self
-        
+
         panel = newPanel
         newPanel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
-    
+
     func closePanel() {
         panel?.close()
     }
-    
-    // Listen for the user clicking the red 'X' button
+
     func windowWillClose(_ notification: Notification) {
         panel = nil
     }

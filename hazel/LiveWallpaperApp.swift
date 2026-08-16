@@ -92,8 +92,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
 
-        let openItem = NSMenuItem(title: "Hazel", action: #selector(openManagement), keyEquivalent: "h")
+        // NSMenu picks up the system's Liquid Glass material on macOS 26+ for free.
+        // The job here is structure and SF Symbols, not custom drawing.
+        let openItem = NSMenuItem(title: "Open Hazel", action: #selector(openManagement), keyEquivalent: "h")
         openItem.target = self
+        openItem.image = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: nil)
         menu.addItem(openItem)
 
         menu.addItem(NSMenuItem.separator())
@@ -108,27 +111,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             fitMenu.addItem(item)
         }
-        
+
         let fitItem = NSMenuItem(title: "Wallpaper Fit", action: nil, keyEquivalent: "")
+        fitItem.image = NSImage(systemSymbolName: "aspectratio", accessibilityDescription: nil)
         fitItem.submenu = fitMenu
         menu.addItem(fitItem)
 
-        let startupItem = NSMenuItem(title: "Open on Startup", action: #selector(toggleStartup(_:)), keyEquivalent: "")
+        let startupItem = NSMenuItem(title: "Open at Login", action: #selector(toggleStartup(_:)), keyEquivalent: "")
         startupItem.target = self
+        startupItem.image = NSImage(systemSymbolName: "power", accessibilityDescription: nil)
         startupItem.state = SettingsManager.shared.openOnStartup ? .on : .off
         menu.addItem(startupItem)
 
-        let removeStoreItem = NSMenuItem(
-            title: "Remove Hazel Wallpapers from System Settings…",
-            action: #selector(removeFromSystemSettings),
-            keyEquivalent: ""
-        )
-        removeStoreItem.target = self
-        menu.addItem(removeStoreItem)
-
         menu.addItem(NSMenuItem.separator())
 
-        let quitItem = NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: "Quit Hazel", action: #selector(quitApp), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
 
@@ -164,39 +161,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let newValue = !SettingsManager.shared.openOnStartup
         SettingsManager.shared.openOnStartup = newValue
         sender.state = newValue ? .on : .off
-    }
-
-    @objc private func removeFromSystemSettings() {
-        let alert = NSAlert()
-        alert.messageText = "Remove Hazel wallpapers from System Settings?"
-        alert.informativeText = """
-        Your videos stay in Hazel. This only removes the "Hazel" section from \
-        System Settings → Wallpaper → Screen Saver.
-
-        Hazel re-adds it the next time it launches or you change your library, \
-        so use this before uninstalling.
-        """
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Remove")
-        alert.addButton(withTitle: "Cancel")
-
-        NSApp.activate(ignoringOtherApps: true)
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-
-        WallpaperStoreRegistrar.shared.removeAll { succeeded in
-            guard !succeeded else { return }
-
-            let failure = NSAlert()
-            failure.messageText = "Couldn't remove Hazel wallpapers"
-            failure.informativeText = """
-            System Settings may still show the "Hazel" section. Try again, or \
-            remove it after restarting your Mac.
-            """
-            failure.alertStyle = .warning
-            failure.addButton(withTitle: "OK")
-            NSApp.activate(ignoringOtherApps: true)
-            failure.runModal()
-        }
     }
 
     @objc private func quitApp() {

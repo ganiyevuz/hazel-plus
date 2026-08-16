@@ -1,6 +1,14 @@
 import SwiftUI
 import AppKit
 
+/// Shared card geometry. 16:9 thumbnails so video stills are never letterboxed.
+private enum CardMetrics {
+    static let width: CGFloat = 168
+    static let thumbnailHeight: CGFloat = 94
+    static let cornerRadius: CGFloat = 10
+    static let thumbnailCornerRadius: CGFloat = 8
+}
+
 struct WallpaperCard: View {
     let item: WallpaperItem
     let isSelected: Bool
@@ -10,78 +18,95 @@ struct WallpaperCard: View {
     let onToggleMute: () -> Void
 
     @State private var thumbnailImage: NSImage?
-
-    private let cardWidth: CGFloat = 160
-    private let cardHeight: CGFloat = 140
-    private let thumbnailWidth: CGFloat = 140
-    private let thumbnailHeight: CGFloat = 79
+    @State private var isHovered = false
 
     var body: some View {
-        VStack(spacing: 8) {
-            ZStack {
-                if let image = thumbnailImage {
-                    Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: thumbnailWidth, height: thumbnailHeight)
-                        .clipped()
-                } else {
-                    Rectangle()
-                        .fill(Color.gray.opacity(0.3))
-                        .frame(width: thumbnailWidth, height: thumbnailHeight)
-                        .overlay(
-                            Image(systemName: "video.fill")
-                                .font(.system(size: 24))
-                                .foregroundColor(.gray)
-                        )
-                }
-
-                if isSelected {
-                    RoundedRectangle(cornerRadius: 4)
-                        .stroke(Color.accentColor, lineWidth: 3)
-                        .frame(width: thumbnailWidth, height: thumbnailHeight)
-                    
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 24))
-                        .foregroundColor(.accentColor)
-                        .background(Circle().fill(Color.black.opacity(0.5)))
-                }
-            }
-            .frame(width: thumbnailWidth, height: thumbnailHeight)
-            .cornerRadius(4)
-            .onTapGesture(perform: onTap)
-
-            Text(item.title)
-                .font(Font.custom("GeistPixel-Square", size: 11))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(width: cardWidth - 16)
+        VStack(alignment: .leading, spacing: 8) {
+            thumbnail
+            caption
         }
-        .frame(width: cardWidth, height: cardHeight)
         .padding(8)
+        .frame(width: CardMetrics.width)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(isSelected ? Color.accentColor.opacity(0.15) : Color.gray.opacity(0.1))
+            RoundedRectangle(cornerRadius: CardMetrics.cornerRadius, style: .continuous)
+                .fill(.quaternary.opacity(isHovered ? 0.6 : 0.35))
         )
-        .contextMenu {
-            Button(item.isLooping ? "Disable Loop" : "Enable Loop", action: onToggleLoop)
-            Button(item.isMuted ? "Unmute" : "Mute", action: onToggleMute)
-            Divider()
-            Button("Remove", role: .destructive, action: onRemove)
+        .overlay(
+            RoundedRectangle(cornerRadius: CardMetrics.cornerRadius, style: .continuous)
+                .strokeBorder(Color.accentColor, lineWidth: isSelected ? 2 : 0)
+        )
+        // Lifts on hover the way native macOS grids do, rather than only tinting.
+        .shadow(color: .black.opacity(isHovered ? 0.18 : 0), radius: 8, y: 3)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onTap)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) { isHovered = hovering }
         }
+        .contextMenu {
+            Button(item.isLooping ? "Disable Loop" : "Enable Loop", systemImage: "repeat", action: onToggleLoop)
+            Button(item.isMuted ? "Unmute" : "Mute", systemImage: item.isMuted ? "speaker.slash" : "speaker.wave.2", action: onToggleMute)
+            Divider()
+            Button("Remove", systemImage: "trash", role: .destructive, action: onRemove)
+        }
+        .help(item.title)
         .onAppear(perform: loadThumbnail)
     }
 
-    private func loadThumbnail() {
-        DispatchQueue.global(qos: .userInitiated).async {
-            let fileManager = FileManager.default
-            if let thumbnailPath = item.thumbnailPath,
-               fileManager.fileExists(atPath: thumbnailPath),
-               let image = NSImage(contentsOfFile: thumbnailPath) {
-                DispatchQueue.main.async {
-                    self.thumbnailImage = image
-                }
+    private var thumbnail: some View {
+        ZStack {
+            if let image = thumbnailImage {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                Rectangle()
+                    .fill(.quaternary)
+                    .overlay(
+                        Image(systemName: "film")
+                            .font(.system(size: 20))
+                            .foregroundStyle(.secondary)
+                    )
             }
+        }
+        .frame(height: CardMetrics.thumbnailHeight)
+        .frame(maxWidth: .infinity)
+        .clipShape(RoundedRectangle(cornerRadius: CardMetrics.thumbnailCornerRadius, style: .continuous))
+        .overlay(alignment: .topTrailing) {
+            if isSelected {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundStyle(.white, Color.accentColor)
+                    .padding(6)
+            }
+        }
+    }
+
+    private var caption: some View {
+        HStack(spacing: 4) {
+            Text(item.title)
+                .font(.caption)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            Spacer(minLength: 0)
+
+            // Only surface the non-default states, so the row stays quiet.
+            if !item.isLooping {
+                Image(systemName: "repeat.1").font(.caption2).foregroundStyle(.secondary)
+            }
+            if !item.isMuted {
+                Image(systemName: "speaker.wave.2.fill").font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func loadThumbnail() {
+        guard thumbnailImage == nil else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let thumbnailPath = item.thumbnailPath,
+                  FileManager.default.fileExists(atPath: thumbnailPath),
+                  let image = NSImage(contentsOfFile: thumbnailPath) else { return }
+            DispatchQueue.main.async { thumbnailImage = image }
         }
     }
 }
@@ -89,42 +114,35 @@ struct WallpaperCard: View {
 struct AddCard: View {
     let onTap: () -> Void
 
-    private let cardWidth: CGFloat = 160
-    private let cardHeight: CGFloat = 140
-    private let thumbnailWidth: CGFloat = 140
-    private let thumbnailHeight: CGFloat = 79
-    
     @State private var isHovered = false
 
     var body: some View {
-        VStack(spacing: 8) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(Color.gray.opacity(isHovered ? 0.3 : 0.2))
-                    .frame(width: thumbnailWidth, height: thumbnailHeight)
-                    .scaleEffect(isHovered ? 1.05 : 1.0)
-
-                Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 32))
-                    .foregroundColor(.accentColor)
-            }
-            .frame(width: thumbnailWidth, height: thumbnailHeight)
-            .onTapGesture(perform: onTap)
+        VStack(alignment: .leading, spacing: 8) {
+            RoundedRectangle(cornerRadius: CardMetrics.thumbnailCornerRadius, style: .continuous)
+                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                .foregroundStyle(isHovered ? Color.accentColor : .secondary)
+                .frame(height: CardMetrics.thumbnailHeight)
+                .frame(maxWidth: .infinity)
+                .overlay(
+                    Image(systemName: "plus")
+                        .font(.system(size: 22, weight: .medium))
+                        .foregroundStyle(isHovered ? Color.accentColor : .secondary)
+                )
 
             Text("Add Wallpaper")
-                .font(Font.custom("GeistPixel-Square", size: 11))
-                .foregroundColor(.secondary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
-        .frame(width: cardWidth, height: cardHeight)
         .padding(8)
+        .frame(width: CardMetrics.width)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.gray.opacity(isHovered ? 0.2 : 0.1))
+            RoundedRectangle(cornerRadius: CardMetrics.cornerRadius, style: .continuous)
+                .fill(.quaternary.opacity(isHovered ? 0.5 : 0.25))
         )
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onTap)
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                isHovered = hovering
-            }
+            withAnimation(.easeOut(duration: 0.12)) { isHovered = hovering }
         }
     }
 }
