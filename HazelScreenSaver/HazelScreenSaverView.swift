@@ -1,7 +1,13 @@
 import ScreenSaver
 import AVFoundation
+import OSLog
 
 class HazelScreenSaverView: ScreenSaverView {
+    // The saver runs inside Apple's sandboxed legacyScreenSaver extension, where no
+    // debugger is practical — diagnose with:
+    //   log stream --predicate 'subsystem == "com.live.hazel.screensaver"'
+    private static let log = Logger(subsystem: "com.live.hazel.screensaver", category: "playback")
+
     private let playerCore = WallpaperPlayerCore()
     private var refreshTimer: Timer?
 
@@ -50,8 +56,11 @@ class HazelScreenSaverView: ScreenSaverView {
 
     private func loadCurrentSelection() {
         guard let selection = WallpaperLibraryReader.currentSelection() else {
+            Self.log.error("no active wallpaper — library unreadable or nothing selected; showing black")
             return
         }
+
+        Self.log.info("loading \(selection.url.lastPathComponent, privacy: .public), preview=\(self.isLikelyPreview)")
 
         playerCore.load(
             url: selection.url,
