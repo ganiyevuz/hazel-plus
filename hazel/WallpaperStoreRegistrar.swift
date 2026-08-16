@@ -371,8 +371,11 @@ final class WallpaperStoreRegistrar {
             return
         }
 
+        // Keep files for everything still in the library — including items whose
+        // preparation failed transiently this round. Deleting those would discard a
+        // perfectly good prepared copy over a temporary error.
         removeOrphans(previouslyRegistered: previouslyRegistered,
-                      keeping: Set(registered.map { $0.item.id.uuidString }))
+                      keeping: Set(library.map { $0.id.uuidString }))
         reloadWallpaperAgent()
         log.info("registered \(registered.count) wallpapers")
     }
@@ -395,7 +398,13 @@ final class WallpaperStoreRegistrar {
         manifest["assets"] = assets
         manifest["categories"] = categories
 
-        try? writeManifest(manifest)
+        do {
+            try writeManifest(manifest)
+        } catch {
+            log.error("manifest write failed: \(String(describing: error), privacy: .public)")
+            return
+        }
+
         removeOrphans(previouslyRegistered: previouslyRegistered, keeping: [])
         reloadWallpaperAgent()
     }
