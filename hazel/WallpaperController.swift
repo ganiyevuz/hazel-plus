@@ -10,6 +10,7 @@ class WallpaperController: ObservableObject {
     private var screenObserver: Any?
     private var sleepObserver: Any?
     private var wakeObserver: Any?
+    private var occlusionObserver: Any?
 
     init(store: WallpaperStore) {
         self.store = store
@@ -47,6 +48,32 @@ class WallpaperController: ObservableObject {
         ) { [weak self] _ in
             self?.resumeIfNeeded()
         }
+
+        // Decoding video nobody can see is pure battery cost. macOS reports when
+        // a window stops being visible — covered by a fullscreen app, another
+        // Space, or a window in front — so playback follows that.
+        occlusionObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeOcclusionStateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let window = notification.object as? WallpaperWindow else { return }
+            self?.handleOcclusionChange(for: window)
+        }
+    }
+
+    /// Pauses a screen's video while its wallpaper window is not visible, and
+    /// resumes it when it is. Per-window, so covering one display does not stop
+    /// the wallpaper on another.
+    private func handleOcclusionChange(for window: WallpaperWindow) {
+        guard let entry = wallpaperWindows.values.first(where: { $0.window === window }) else { return }
+
+        if window.occlusionState.contains(.visible) {
+            guard isActive else { return }
+            entry.playerView.play()
+        } else {
+            entry.playerView.pause()
+        }
     }
 
     private func removeNotifications() {
@@ -58,6 +85,9 @@ class WallpaperController: ObservableObject {
         }
         if let observer = wakeObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
+        }
+        if let observer = occlusionObserver {
+            NotificationCenter.default.removeObserver(observer)
         }
     }
 
@@ -116,6 +146,10 @@ class WallpaperController: ObservableObject {
         for (_, entry) in wallpaperWindows {
             entry.playerView.loadVideo(url: url, isLooping: activeItem.isLooping, isMuted: activeItem.isMuted, fit: store.wallpaperFit)
         }
+
+        // Put a still of this video underneath, so the desktop macOS composites
+        // during a Space switch matches what Hazel is playing on top of it.
+        DesktopPictureBridge.shared.apply(item: activeItem)
     }
 
     func clearWallpaper() {
@@ -124,6 +158,8 @@ class WallpaperController: ObservableObject {
         for (_, entry) in wallpaperWindows {
             entry.playerView.cleanup()
         }
+
+        DesktopPictureBridge.shared.restore()
     }
 
     func pauseAll() {
