@@ -1,0 +1,103 @@
+name: Build
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and package
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Hazel targets macOS 26.2 and uses Liquid Glass APIs (GlassEffectContainer,
+      # .buttonStyle(.glass)) that only exist in the macOS 26 SDK and later. Pick the
+      # newest Xcode the runner has, and print it — when this fails to compile, the
+      # runner image is the first thing to check.
+      - name: Select newest Xcode
+        run: |
+          echo "Xcode versions available on this runner:"
+          ls -d /Applications/Xcode*.app 2>/dev/null || echo "  (none found)"
+          latest=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$latest" ]; then sudo xcode-select -s "$latest"; fi
+          xcodebuild -version
+          echo "SDK: $(xcrun --sdk macosx --show-sdk-version)"
+
+      # Unsigned on purpose. Runners have no keychain, certificate, or provisioning
+      # profile, so the project's automatic signing cannot succeed here. Users open
+      # the result with right-click -> Open. Signing would need a Developer ID
+      # certificate stored as a repository secret.
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild clean build \
+            -project hazel.xcodeproj \
+            -scheme hazel \
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Locate the app
+        id: app
+        run: |
+          app=$(find build -name "hazel.app" -maxdepth 4 -type d | head -1)
+          if [ -z "$app" ]; then echo "hazel.app not found"; exit 1; fi
+          echo "path=$app" >> "$GITHUB_OUTPUT"
+          version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$app/Contents/Info.plist" 2>/dev/null || echo "0.0")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Built $app (version $version)"
+
+      # A plain drag-to-Applications disk image: the app plus a symlink users drop
+      # it onto. No background art or custom layout, which keeps this dependency-free.
+      - name: Create DMG
+        id: dmg
+        run: |
+          name="Hazel-${{ steps.app.outputs.version }}"
+          if [ "${{ github.ref_type }}" != "tag" ]; then
+            name="Hazel-${{ steps.app.outputs.version }}-${GITHUB_SHA::7}"
+          fi
+          staging=$(mktemp -d)
+          cp -R "${{ steps.app.outputs.path }}" "$staging/"
+          ln -s /Applications "$staging/Applications"
+          hdiutil create -volname "Hazel" -srcfolder "$staging" -ov -format UDZO "$name.dmg"
+          echo "path=$name.dmg" >> "$GITHUB_OUTPUT"
+          ls -lh "$name.dmg"
+
+      # Every push gets a downloadable build, so there is something to test without
+      # cutting a release.
+      - name: Upload DMG as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.dmg.outputs.path }}
+          path: ${{ steps.dmg.outputs.path }}
+          if-no-files-found: error
+
+      # Releases are cut from tags only. Publishing one per push to main would bury
+      # real releases under hundreds of entries.
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Passed as environment variables rather than inlined into the script:
+          # ${{ }} is substituted before the shell parses the line, so a crafted
+          # tag name inlined directly would execute as shell.
+          TAG: ${{ github.ref_name }}
+          DMG: ${{ steps.dmg.outputs.path }}
+        run: |
+          gh release create "$TAG" "$DMG" \
+            --title "Hazel $TAG" \
+            --generate-notes \
+            --notes "This build is **not code-signed**. On first launch, right-click Hazel in Applications and choose Open, then confirm — otherwise macOS will refuse to open it."
