@@ -16,6 +16,9 @@ jobs:
   build:
     name: Build and package
     runs-on: macos-latest
+    # Needed to publish releases; the default token is read-only on many repos.
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
@@ -85,8 +88,27 @@ jobs:
           path: ${{ steps.dmg.outputs.path }}
           if-no-files-found: error
 
-      # Releases are cut from tags only. Publishing one per push to main would bury
-      # real releases under hundreds of entries.
+      # A single rolling prerelease that always holds the newest main build, so
+      # there is a downloadable DMG on the Releases page without cutting a real
+      # release for every commit. Deleted and recreated rather than appended to,
+      # otherwise its assets would accumulate one DMG per push.
+      - name: Update the rolling "latest" release
+        if: github.ref_type == 'branch' && github.ref_name == 'main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DMG: ${{ steps.dmg.outputs.path }}
+          SHA: ${{ github.sha }}
+        run: |
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create latest "$DMG" \
+            --prerelease \
+            --target "$SHA" \
+            --title "Latest build from main" \
+            --notes "Automatically built from the newest commit on \`main\` (\`${SHA:0:7}\`). For stable versions see the tagged releases below.
+
+          This build is **not code-signed**. On first launch, right-click Hazel in Applications and choose Open, then confirm — otherwise macOS will refuse to open it."
+
+      # Tagged releases are the real ones and are never overwritten.
       - name: Publish release
         if: github.ref_type == 'tag'
         env:
