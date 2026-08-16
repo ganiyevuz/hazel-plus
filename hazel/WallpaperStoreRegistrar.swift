@@ -160,7 +160,15 @@ final class WallpaperStoreRegistrar {
         }
 
         _ = semaphore.wait(timeout: .now() + 120)
-        return success ? destination : nil
+
+        guard success else {
+            // A failed or timed-out export can leave a partial file behind. Left in
+            // place, isUpToDate (mtime-only) would treat it as fresh and skip
+            // regeneration forever, leaving a corrupt asset in Apple's store.
+            try? fileManager.removeItem(at: destination)
+            return nil
+        }
+        return destination
     }
 
     /// Writes a silent stereo LPCM file at least `seconds` long.
