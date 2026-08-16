@@ -23,6 +23,12 @@ final class WallpaperStoreRegistrar {
     private let log = Logger(subsystem: "com.live.hazel", category: "store-registrar")
     private let fileManager = FileManager.default
 
+    /// Serializes all mutating work. Callers can fire syncs in quick succession
+    /// (importing several files at once calls addWallpaper per file), and each sync
+    /// is a full read-modify-write of a shared manifest plus writes to shared output
+    /// paths — running two at once corrupts both.
+    private let workQueue = DispatchQueue(label: "com.live.hazel.wallpaper-store-registrar")
+
     private var aerialsURL: URL {
         RealHomeDirectory.url
             .appendingPathComponent("Library/Application Support/com.apple.wallpaper/aerials", isDirectory: true)
@@ -317,8 +323,16 @@ final class WallpaperStoreRegistrar {
 
     // MARK: - Sync
 
-    /// Makes the store reflect `library` exactly. Idempotent — safe on every launch.
+    /// Enqueues a sync. Returns immediately; work runs serially in FIFO order, so the
+    /// most recently requested library state is the one that lands last and wins.
     func sync(library: [WallpaperItem], activeID: UUID?) {
+        workQueue.async { [weak self] in
+            self?.performSync(library: library, activeID: activeID)
+        }
+    }
+
+    /// Makes the store reflect `library` exactly. Idempotent — safe on every launch.
+    private func performSync(library: [WallpaperItem], activeID: UUID?) {
         guard var manifest = readManifest() else { return }
         backupIfNeeded()
 
@@ -382,8 +396,16 @@ final class WallpaperStoreRegistrar {
 
     /// Removes every Hazel entry and prepared file from the store.
     func removeAll() {
+        workQueue.async { [weak self] in
+            self?.performRemoveAll()
+        }
+    }
+
+    private func performRemoveAll() {
         guard var manifest = readManifest() else { return }
         backupIfNeeded()
+
+        let before = try? JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
 
         var assets = manifest["assets"] as? [[String: Any]] ?? []
         var categories = manifest["categories"] as? [[String: Any]] ?? []
@@ -397,6 +419,12 @@ final class WallpaperStoreRegistrar {
         categories.removeAll { ($0["id"] as? String) == Self.categoryID }
         manifest["assets"] = assets
         manifest["categories"] = categories
+
+        let after = try? JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
+        guard before != after else {
+            log.info("wallpaper store already empty")
+            return
+        }
 
         do {
             try writeManifest(manifest)

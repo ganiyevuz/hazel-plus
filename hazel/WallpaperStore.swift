@@ -95,14 +95,16 @@ class WallpaperStore: ObservableObject {
     }
 
     /// Mirrors the library into the macOS wallpaper store so Hazel's videos appear
-    /// in System Settings. Runs off the main thread: preparing a video takes about
-    /// a second each, and this must not block launch or the import UI.
+    /// in System Settings. `WallpaperStoreRegistrar.sync` enqueues its own work onto
+    /// a private serial queue and returns immediately, so this call never blocks
+    /// launch or the import UI — and calling it straight from here (rather than via
+    /// another dispatch hop) keeps enqueue order matching call order, which is what
+    /// makes the most recently requested library state win when several syncs are
+    /// requested in quick succession (e.g. importing multiple files at once).
     func syncWallpaperStore() {
         let snapshot = wallpapers
         let activeID = activeWallpaperID
-        DispatchQueue.global(qos: .utility).async {
-            WallpaperStoreRegistrar.shared.sync(library: snapshot, activeID: activeID)
-        }
+        WallpaperStoreRegistrar.shared.sync(library: snapshot, activeID: activeID)
     }
 
     func addWallpaper(url: URL) -> WallpaperItem? {
