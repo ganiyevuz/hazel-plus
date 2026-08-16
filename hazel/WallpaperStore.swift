@@ -42,7 +42,10 @@ class WallpaperStore: ObservableObject {
     }
 
     func load() {
-        defer { isLoaded = true }
+        defer {
+            isLoaded = true
+            syncWallpaperStore()
+        }
 
         guard fileManager.fileExists(atPath: storageURL.path) else { return }
 
@@ -91,6 +94,17 @@ class WallpaperStore: ObservableObject {
         }
     }
 
+    /// Mirrors the library into the macOS wallpaper store so Hazel's videos appear
+    /// in System Settings. Runs off the main thread: preparing a video takes about
+    /// a second each, and this must not block launch or the import UI.
+    func syncWallpaperStore() {
+        let snapshot = wallpapers
+        let activeID = activeWallpaperID
+        DispatchQueue.global(qos: .utility).async {
+            WallpaperStoreRegistrar.shared.sync(library: snapshot, activeID: activeID)
+        }
+    }
+
     func addWallpaper(url: URL) -> WallpaperItem? {
         let fileName = url.deletingPathExtension().lastPathComponent
 
@@ -120,6 +134,7 @@ class WallpaperStore: ObservableObject {
 
         wallpapers.insert(item, at: 0)
         save()
+        syncWallpaperStore()
         return item
     }
 
@@ -138,6 +153,8 @@ class WallpaperStore: ObservableObject {
         if activeWallpaperID == item.id {
             activeWallpaperID = nil
         }
+
+        syncWallpaperStore()
     }
 
     func setActiveWallpaper(_ item: WallpaperItem) {
