@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Hazel is a free/open-source macOS menu-bar app that plays a video on loop as a live desktop wallpaper. Pure Swift/SwiftUI + AppKit, no external dependencies, no SPM packages, single Xcode target.
+Hazel is a free/open-source macOS menu-bar app that plays a video on loop as a live desktop wallpaper, with a companion Screen Saver that plays the same video. Pure Swift/SwiftUI + AppKit, no external dependencies, no SPM packages. Two Xcode targets: `hazel` (the menu-bar app) and `HazelScreenSaver` (a legacy `ScreenSaverView`-based `.saver` plugin).
 
 ## Build & run
 
@@ -14,9 +14,14 @@ No CLI test suite or lint config exists in this repo — build/run through Xcode
 open hazel.xcodeproj
 ```
 
-- Scheme/target: `hazel` (bundle id `com.live.hazel`)
+- Targets: `hazel` (bundle id `com.live.hazel`) and `HazelScreenSaver` (bundle id `com.live.hazel.screensaver`, builds `Hazel.saver`)
 - Deployment target: macOS 26.2, Swift 5.0
-- `xcodebuild` requires a full Xcode install (not just Command Line Tools) to build this project — `xcode-select -p` must point at `/Applications/Xcode.app/...`, not `CommandLineTools`.
+- `xcodebuild` requires a full Xcode install (not just Command Line Tools) — `xcode-select -p` must point at an `Xcode.app`, not `CommandLineTools`. When it does, CLI builds work and are the fastest way to verify a change:
+  ```bash
+  xcodebuild -project hazel.xcodeproj -target hazel -configuration Debug build
+  ```
+  Building `hazel` also builds `HazelScreenSaver` first (target dependency) and embeds `Hazel.saver` into `hazel.app/Contents/Resources/`.
+- Xcode 27's New Target wizard still offers a "Screen Saver" template, but it generates **Objective-C** (`.h`/`.m`) — the Swift implementation here replaced those template files.
 - There is no test target. Do not add one unless asked.
 
 ## Architecture
@@ -26,6 +31,10 @@ The app has no main window — it's entirely menu-bar driven, wired up in `AppDe
 - **`WallpaperStore`** (`WallpaperStore.swift`) — the model/persistence layer. Owns the `[WallpaperItem]` library, persisted as JSON at `~/Library/Application Support/LiveWallpaper/wallpapers.json`. Imported videos are *copied* into `.../LiveWallpaper/Videos/` (not referenced in place), and a thumbnail PNG is generated synchronously (via `AVAssetImageGenerator` + a `DispatchSemaphore`) into `~/Library/Caches/LiveWallpaper/Thumbnails/`. The active wallpaper's ID is persisted separately in `UserDefaults`.
 - **`WallpaperController`** (`WallpaperController.swift`) — the runtime/presentation layer. For each `NSScreen`, it owns one `WallpaperWindow` + `VideoPlayerView` pair (keyed by screen in a dictionary), and keeps that set in sync with `NSApplication.didChangeScreenParametersNotification` (monitor connect/disconnect). It also pauses/resumes playback on `NSWorkspace` sleep/wake notifications so the video doesn't keep decoding while the display is off.
 - **`VideoPlayerView`** (`VideoPlayerView.swift`) — an `NSView` wrapping `AVQueuePlayer` + `AVPlayerLayer`. Looping uses `AVPlayerLooper`, not a manual seek-to-zero. `SettingsManager.shared.wallpaperFit` is read at load time to set `AVLayerVideoGravity`.
+Playback logic shared between the desktop and the screen saver lives in `WallpaperPlayerCore.swift` (the `AVQueuePlayer`/`AVPlayerLooper`/`AVPlayerLayer` setup, with no `NSView` dependency) — `VideoPlayerView` and `HazelScreenSaverView` (`HazelScreenSaver/HazelScreenSaverView.swift`) both drive it. Note the ordering contract: `WallpaperPlayerCore.load(...)` deliberately does *not* start playback; callers attach `playerCore.layer` to their layer hierarchy first, then call `playerCore.play()`. The wallpaper library, active wallpaper ID, and fit setting are persisted together in one file (`WallpaperLibraryFile.swift`'s schema, written by `WallpaperStore`, read by both the main app and — via the read-only `WallpaperLibraryReader.swift` — the screen saver process, which runs as a separate bundle identity and can't share `UserDefaults` or a sandboxed container with the main app). `HazelScreenSaverView` reads the active wallpaper once per screen saver activation (a fresh process each time), not continuously.
+
+The four files shared between both targets are `WallpaperItem.swift`, `WallpaperFit.swift`, `WallpaperLibraryFile.swift`, `WallpaperLibraryReader.swift`, and `WallpaperPlayerCore.swift`. They live in `hazel/` and are pulled into `HazelScreenSaver` via a `PBXFileSystemSynchronizedBuildFileExceptionSet` in `project.pbxproj` (the synchronized-group equivalent of ticking a second Target Membership box). **`WallpaperFit` lives in its own `WallpaperFit.swift`, not in `SettingsManager.swift`** — it was extracted precisely so the saver can use it without dragging in `SettingsManager`'s `ServiceManagement`/`SMAppService` login-item code. If you add a new type that the saver needs, give it its own file and add it to that exception set.
+
 - **`WallpaperWindow`** (`WallpaperWindow.swift`) — a borderless `NSWindow` pinned just above the desktop icons layer (`CGWindowLevelForKey(.desktopWindow) + 1`), spans all Spaces (`canJoinAllSpaces`), ignores mouse events, and can never become key/main — this is what makes it read as "wallpaper" rather than a normal window.
 
 Settings (`SettingsManager.swift`, an `@Observable` singleton) persist to `UserDefaults` and cover wallpaper fit (fill/fit/center/stretch) and launch-at-login (via `SMAppService`, macOS 13+ API).
@@ -36,6 +45,6 @@ A custom pixel font (`GeistPixel-Square.otf` in `Resources/Fonts/`) is manually 
 
 ## Key constraints
 
-- **App Sandbox is on** (`hazel.entitlements`): `com.apple.security.app-sandbox` + `com.apple.security.files.user-selected.read-only`. Any new file access outside the sandbox (beyond user-selected video imports via the security-scoped `NSOpenPanel`/file importer flow) needs a matching entitlement.
-- Video URLs from `WallpaperStore` are resolved through security-scoped resource APIs (`startAccessingSecurityScopedResource`/`stopAccessingSecurityScopedResource`) — since videos are copied into app-owned storage rather than bookmarked, this scoping is mostly relevant at import time and should be preserved if that copy-on-import behavior changes.
+- **App Sandbox is off** (`hazel.entitlements` is an empty dict). This is required, not optional: `HazelScreenSaver` runs as a separate process/bundle identity and cannot read a sandboxed container. The app is direct-download/notarized distribution, not App Store-eligible. See `docs/superpowers/specs/2026-08-03-screen-saver-support-design.md`.
+- The app copies `Hazel.saver` from its own bundle into `~/Library/Screen Savers/` on every launch (`AppDelegate.installScreenSaverIfNeeded()`), overwriting any existing copy so the installed saver always matches the running app version.
 - Screen/display handling must go through `WallpaperController`'s screen-diffing logic (`handleScreenChange`) — don't create `WallpaperWindow`s ad hoc elsewhere, or external-display connect/disconnect will leak or duplicate windows.
