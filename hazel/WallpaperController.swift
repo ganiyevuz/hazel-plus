@@ -12,6 +12,15 @@ class WallpaperController: ObservableObject {
     private var wakeObserver: Any?
     private var occlusionObserver: Any?
 
+    /// Pending "pause because hidden" work, keyed by window.
+    ///
+    /// Pausing the moment a window is hidden makes every quick Space switch pay
+    /// the decoder spin-up cost on the way back. Waiting a beat first means a
+    /// swipe away and back never stops playback at all, while genuinely leaving
+    /// the desktop covered still stops the decode.
+    private var pendingPauses: [ObjectIdentifier: DispatchWorkItem] = [:]
+    private let hiddenPauseDelay: TimeInterval = 3
+
     init(store: WallpaperStore) {
         self.store = store
         setupNotifications()
@@ -67,12 +76,22 @@ class WallpaperController: ObservableObject {
     /// the wallpaper on another.
     private func handleOcclusionChange(for window: WallpaperWindow) {
         guard let entry = wallpaperWindows.values.first(where: { $0.window === window }) else { return }
+        let key = ObjectIdentifier(window)
+
+        // Any visibility change cancels a pause that has not fired yet.
+        pendingPauses.removeValue(forKey: key)?.cancel()
 
         if window.occlusionState.contains(.visible) {
             guard isActive else { return }
             entry.playerView.play()
         } else {
-            entry.playerView.pause()
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.pendingPauses[key] != nil else { return }
+                self.pendingPauses.removeValue(forKey: key)
+                entry.playerView.pause()
+            }
+            pendingPauses[key] = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + hiddenPauseDelay, execute: work)
         }
     }
 
@@ -89,6 +108,8 @@ class WallpaperController: ObservableObject {
         if let observer = occlusionObserver {
             NotificationCenter.default.removeObserver(observer)
         }
+        for (_, work) in pendingPauses { work.cancel() }
+        pendingPauses.removeAll()
     }
 
     private func handleScreenChange() {
