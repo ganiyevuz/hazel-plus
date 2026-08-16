@@ -101,12 +101,18 @@ enum VideoCompressor {
             export.outputURL = temporary
             export.outputFileType = .mov
 
-            let ticker = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
-                progress(export.progress)
+            // Scheduled ON the main run loop deliberately: a Timer created on a
+            // Swift-concurrency thread is not reliably pumped (so it may never
+            // fire), and its callback here mutates SwiftUI @State, which must
+            // happen on main.
+            let ticker = await MainActor.run {
+                Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
+                    progress(export.progress)
+                }
             }
 
             await export.export()
-            ticker.invalidate()
+            await MainActor.run { ticker.invalidate() }
 
             guard export.status == .completed else {
                 try? FileManager.default.removeItem(at: temporary)

@@ -21,6 +21,7 @@ struct WallpaperCard: View {
 
     @State private var thumbnailImage: NSImage?
     @State private var isHovered = false
+    @State private var detail: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -59,6 +60,9 @@ struct WallpaperCard: View {
         }
         .help(item.title)
         .onAppear(perform: loadThumbnail)
+        // Keyed on the file's identity so a compress or ping-pong render
+        // refreshes the numbers instead of showing the pre-change size.
+        .task(id: item.url) { await loadDetail() }
     }
 
     private var thumbnail: some View {
@@ -91,6 +95,17 @@ struct WallpaperCard: View {
     }
 
     private var caption: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            titleRow
+            // Resolution and size together answer "is this worth compressing?"
+            Text(detail ?? " ")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+        }
+    }
+
+    private var titleRow: some View {
         HStack(spacing: 4) {
             Text(item.title)
                 .font(.caption)
@@ -110,6 +125,22 @@ struct WallpaperCard: View {
                 Image(systemName: "speaker.wave.2.fill").font(.caption2).foregroundStyle(.secondary)
             }
         }
+    }
+
+    /// "3840×2160 · 49 MB", or just the size if the dimensions can't be read.
+    private func loadDetail() async {
+        let url = item.url
+        let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)??.int64Value
+        let size = await VideoCompressor.videoSize(of: url)
+
+        var parts: [String] = []
+        if let size, size.width > 0 {
+            parts.append("\(Int(size.width))×\(Int(size.height))")
+        }
+        if let bytes, bytes > 0 {
+            parts.append(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))
+        }
+        detail = parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private func loadThumbnail() {

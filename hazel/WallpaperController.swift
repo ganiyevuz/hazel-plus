@@ -127,6 +127,11 @@ class WallpaperController: ObservableObject {
         let screensToAdd = currentScreens.subtracting(existingScreens)
         for screen in screensToAdd {
             createWallpaperWindow(for: screen)
+            // A new window starts with no video. Without this the screen stays
+            // black until the user reselects a wallpaper by hand — and this path
+            // also fires when an existing display merely changes resolution or
+            // arrangement, since that can hand out a new NSScreen identity.
+            loadActiveVideo(into: screen)
         }
 
         for (screen, entry) in wallpaperWindows {
@@ -186,6 +191,21 @@ class WallpaperController: ObservableObject {
     /// Ping-pong plays a pre-rendered forward+reversed file. Real-time reverse
     /// playback decodes at single-digit fps, because most frames are stored as
     /// differences from earlier ones — so the reversal is rendered once instead.
+    /// Loads the current wallpaper into one screen's player.
+    private func loadActiveVideo(into screen: NSScreen) {
+        guard isActive,
+              let activeItem = store.activeWallpaper,
+              let url = store.resolveBookmark(activeItem.url),
+              let entry = wallpaperWindows[screen] else { return }
+
+        entry.playerView.loadVideo(
+            url: playbackURL(for: activeItem, source: url),
+            isLooping: activeItem.isLooping,
+            isMuted: activeItem.isMuted,
+            fit: store.wallpaperFit
+        )
+    }
+
     private func playbackURL(for item: WallpaperItem, source: URL) -> URL {
         guard item.isPingPong, PingPongRenderer.hasCurrentRender(for: item) else { return source }
         return PingPongRenderer.renderedURL(for: item)
