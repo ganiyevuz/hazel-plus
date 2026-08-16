@@ -266,6 +266,10 @@ final class WallpaperStoreRegistrar {
             try pngData.write(to: destination)
             return destination
         } catch {
+            // A partial write would be treated as a finished thumbnail by the
+            // existence check above, permanently pointing Apple's manifest at a
+            // corrupt PNG. Same guard as prepareVideo's failed-export path.
+            try? fileManager.removeItem(at: destination)
             log.error("thumbnail write failed: \(String(describing: error), privacy: .public)")
             return nil
         }
