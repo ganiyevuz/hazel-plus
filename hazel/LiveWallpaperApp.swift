@@ -183,7 +183,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
-        WallpaperStoreRegistrar.shared.removeAll()
+        WallpaperStoreRegistrar.shared.removeAll { succeeded in
+            guard !succeeded else { return }
+
+            let failure = NSAlert()
+            failure.messageText = "Couldn't remove Hazel wallpapers"
+            failure.informativeText = """
+            System Settings may still show the "Hazel" section. Try again, or \
+            remove it after restarting your Mac.
+            """
+            failure.alertStyle = .warning
+            failure.addButton(withTitle: "OK")
+            NSApp.activate(ignoringOtherApps: true)
+            failure.runModal()
+        }
     }
 
     @objc private func quitApp() {

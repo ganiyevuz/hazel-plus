@@ -394,15 +394,19 @@ final class WallpaperStoreRegistrar {
         log.info("registered \(registered.count) wallpapers")
     }
 
-    /// Removes every Hazel entry and prepared file from the store.
-    func removeAll() {
+    /// Removes every Hazel entry and prepared file from the store. `completion`,
+    /// if given, is delivered on the main queue with whether the removal succeeded.
+    func removeAll(completion: ((Bool) -> Void)? = nil) {
         workQueue.async { [weak self] in
-            self?.performRemoveAll()
+            let succeeded = self?.performRemoveAll() ?? false
+            if let completion {
+                DispatchQueue.main.async { completion(succeeded) }
+            }
         }
     }
 
-    private func performRemoveAll() {
-        guard var manifest = readManifest() else { return }
+    private func performRemoveAll() -> Bool {
+        guard var manifest = readManifest() else { return false }
         backupIfNeeded()
 
         let before = try? JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
@@ -423,18 +427,19 @@ final class WallpaperStoreRegistrar {
         let after = try? JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
         guard before != after else {
             log.info("wallpaper store already empty")
-            return
+            return true
         }
 
         do {
             try writeManifest(manifest)
         } catch {
             log.error("manifest write failed: \(String(describing: error), privacy: .public)")
-            return
+            return false
         }
 
         removeOrphans(previouslyRegistered: previouslyRegistered, keeping: [])
         reloadWallpaperAgent()
+        return true
     }
 
     /// Deletes prepared files for assets Hazel previously registered and no longer
@@ -485,11 +490,20 @@ final class WallpaperStoreRegistrar {
 
         guard let scope = root["AllSpacesAndDisplays"] as? [String: Any],
               let idle = scope["Idle"] as? [String: Any],
-              let content = idle["Content"] as? [String: Any],
-              let choices = content["Choices"] as? [[String: Any]],
-              let choice = choices.first,
-              let provider = choice["Provider"] as? String else {
+              let content = idle["Content"] as? [String: Any] else {
             log.error("wallpaper store index has an unexpected shape")
+            return .unknown
+        }
+
+        // A readable store with no Idle choice means nothing is set — that is
+        // "not a Hazel wallpaper", not "we couldn't read it".
+        guard let choices = content["Choices"] as? [[String: Any]],
+              let choice = choices.first else {
+            return .notAnAerial
+        }
+
+        guard let provider = choice["Provider"] as? String else {
+            log.error("wallpaper store choice has no provider")
             return .unknown
         }
 
