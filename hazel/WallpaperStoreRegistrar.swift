@@ -460,4 +460,63 @@ final class WallpaperStoreRegistrar {
         process.arguments = ["WallpaperAgent"]
         try? process.run()
     }
+
+    // MARK: - Reading the current screen saver (read-only)
+
+    /// macOS records the active screen saver here. Hazel only ever READS this file:
+    /// writing it would mean editing the user's live wallpaper settings, which is
+    /// out of scope and far riskier than anything in the aerials manifest.
+    private var storeIndexURL: URL {
+        RealHomeDirectory.url
+            .appendingPathComponent("Library/Application Support/com.apple.wallpaper/Store/Index.plist")
+    }
+
+    /// Reports which wallpaper macOS currently has as the screen saver.
+    ///
+    /// `library` is passed in because the registrar does not own the library and
+    /// otherwise could not tell a Hazel asset from another app's.
+    func currentScreenSaverSelection(library: [WallpaperItem]) -> ScreenSaverSelection {
+        guard let data = try? Data(contentsOf: storeIndexURL),
+              let root = (try? PropertyListSerialization.propertyList(
+                  from: data, options: [], format: nil)) as? [String: Any] else {
+            log.error("wallpaper store index unreadable at \(self.storeIndexURL.path, privacy: .public)")
+            return .unknown
+        }
+
+        guard let scope = root["AllSpacesAndDisplays"] as? [String: Any],
+              let idle = scope["Idle"] as? [String: Any],
+              let content = idle["Content"] as? [String: Any],
+              let choices = content["Choices"] as? [[String: Any]],
+              let choice = choices.first,
+              let provider = choice["Provider"] as? String else {
+            log.error("wallpaper store index has an unexpected shape")
+            return .unknown
+        }
+
+        guard provider == "com.apple.wallpaper.choice.aerials" else {
+            return .notAnAerial
+        }
+
+        guard let assetID = Self.aerialAssetID(from: choice["Configuration"]),
+              let uuid = UUID(uuidString: assetID) else {
+            log.error("aerial choice carried no readable assetID")
+            return .unknown
+        }
+
+        return library.contains(where: { $0.id == uuid }) ? .hazelWallpaper(uuid) : .otherApp
+    }
+
+    /// `Configuration` is stored as an embedded binary plist, but tolerate it
+    /// already being a decoded dictionary — the shape is undocumented and may vary.
+    private static func aerialAssetID(from configuration: Any?) -> String? {
+        if let dictionary = configuration as? [String: Any] {
+            return dictionary["assetID"] as? String
+        }
+        if let data = configuration as? Data,
+           let dictionary = (try? PropertyListSerialization.propertyList(
+               from: data, options: [], format: nil)) as? [String: Any] {
+            return dictionary["assetID"] as? String
+        }
+        return nil
+    }
 }
