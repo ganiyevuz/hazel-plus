@@ -118,6 +118,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         startupItem.state = SettingsManager.shared.openOnStartup ? .on : .off
         menu.addItem(startupItem)
 
+        let removeStoreItem = NSMenuItem(
+            title: "Remove Hazel Wallpapers from System Settings…",
+            action: #selector(removeFromSystemSettings),
+            keyEquivalent: ""
+        )
+        removeStoreItem.target = self
+        menu.addItem(removeStoreItem)
+
         menu.addItem(NSMenuItem.separator())
 
         let quitItem = NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q")
@@ -156,6 +164,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let newValue = !SettingsManager.shared.openOnStartup
         SettingsManager.shared.openOnStartup = newValue
         sender.state = newValue ? .on : .off
+    }
+
+    @objc private func removeFromSystemSettings() {
+        let alert = NSAlert()
+        alert.messageText = "Remove Hazel wallpapers from System Settings?"
+        alert.informativeText = """
+        Your videos stay in Hazel. This only removes the "Hazel" section from \
+        System Settings → Wallpaper → Screen Saver.
+
+        Hazel re-adds it the next time it launches or you change your library, \
+        so use this before uninstalling.
+        """
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Remove")
+        alert.addButton(withTitle: "Cancel")
+
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        WallpaperStoreRegistrar.shared.removeAll()
     }
 
     @objc private func quitApp() {
