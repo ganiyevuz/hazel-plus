@@ -148,6 +148,12 @@ class WallpaperStore: ObservableObject {
 
             try? fileManager.removeItem(at: item.url)
 
+            // Everything derived from this wallpaper goes with it. These are
+            // keyed by item id and would otherwise be orphaned forever — the
+            // ping-pong renders in particular are full video files.
+            DesktopPictureBridge.shared.discardFrames(for: item)
+            PingPongRenderer.discardRender(for: item)
+
             wallpapers.remove(at: index)
             save()
         }

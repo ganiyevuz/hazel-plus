@@ -1,3 +1,4 @@
+import AppKit
 import AVFoundation
 import OSLog
 
@@ -25,6 +26,14 @@ enum PingPongRenderer {
         let directory = caches.appendingPathComponent("LiveWallpaper/PingPong", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory.appendingPathComponent("\(item.id.uuidString).mov")
+    }
+
+    /// Deletes the rendered copy for a wallpaper that no longer exists.
+    ///
+    /// These are full video files — leaving one behind for every deleted
+    /// wallpaper would quietly consume gigabytes.
+    static func discardRender(for item: WallpaperItem) {
+        try? FileManager.default.removeItem(at: renderedURL(for: item))
     }
 
     /// True when a usable render already exists and is newer than the source.
@@ -77,11 +86,68 @@ enum PingPongRenderer {
         }
     }
 
-    /// Reads every frame, then writes them out forward followed by reversed.
+    /// Writes the video out forward, then reversed, without ever holding the
+    /// whole clip in memory.
     ///
-    /// Frames are held as CVPixelBuffers, so memory scales with the clip. That is
-    /// acceptable for wallpaper-length videos and is why this is a deliberate,
-    /// user-triggered action rather than something that runs automatically.
+    /// The forward half streams frame-by-frame. The reverse half can't stream —
+    /// it needs frames in the opposite order to the decoder's — so it walks the
+    /// clip backwards one short window at a time, buffering only that window.
+    ///
+    /// This matters more than it looks: buffering every frame of a 20-second 4K
+    /// clip as BGRA is roughly 20 GB resident, which would swap-thrash or fail
+    /// outright. Windowing keeps it near-constant regardless of clip length.
+    ///
+    /// Frames are also capped at the largest attached display, since a wallpaper
+    /// is never shown at more than that.
+
+    /// Caps a render at the largest attached display, preserving aspect ratio.
+    private static func outputSize(for natural: CGSize) -> CGSize {
+        let maxEdge = NSScreen.screens.reduce(1920.0) { largest, screen in
+            Swift.max(largest, Swift.max(screen.frame.width, screen.frame.height) * screen.backingScaleFactor)
+        }
+        let longest = Swift.max(abs(natural.width), abs(natural.height))
+        guard longest > maxEdge else {
+            return CGSize(width: abs(natural.width).rounded(), height: abs(natural.height).rounded())
+        }
+        let scale = maxEdge / longest
+        // Even dimensions: HEVC encoders reject odd ones.
+        return CGSize(width: (abs(natural.width) * scale / 2).rounded() * 2,
+                      height: (abs(natural.height) * scale / 2).rounded() * 2)
+    }
+
+    /// Decoded frames for a time range, scaled to `size`, delivered one at a time.
+    private static func frames(
+        of asset: AVURLAsset,
+        track: AVAssetTrack,
+        range: CMTimeRange?,
+        size: CGSize
+    ) -> AsyncThrowingStream<CVPixelBuffer, Error> {
+        AsyncThrowingStream { continuation in
+            do {
+                let reader = try AVAssetReader(asset: asset)
+                if let range { reader.timeRange = range }
+                let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+                    kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                    kCVPixelBufferWidthKey as String: Int(size.width),
+                    kCVPixelBufferHeightKey as String: Int(size.height),
+                ])
+                guard reader.canAdd(output) else { throw RenderError.cannotRead }
+                reader.add(output)
+                reader.startReading()
+
+                while let sample = output.copyNextSampleBuffer() {
+                    if let buffer = CMSampleBufferGetImageBuffer(sample) {
+                        continuation.yield(buffer)
+                    }
+                }
+                guard reader.status == .completed else { throw RenderError.cannotRead }
+                continuation.finish()
+            } catch {
+                continuation.finish(throwing: error)
+            }
+        }
+    }
+
     private static func renderPingPong(
         from source: URL,
         to destination: URL,
@@ -97,16 +163,12 @@ enum PingPongRenderer {
         let naturalSize = try await track.load(.naturalSize)
         let transform = try await track.load(.preferredTransform)
         let nominalFrameRate = try await track.load(.nominalFrameRate)
-        let frameRate = nominalFrameRate > 0 ? nominalFrameRate : 30
-        let frameDuration = CMTime(seconds: 1.0 / Double(frameRate), preferredTimescale: 600)
+        let duration = try await asset.load(.duration)
+        let frameRate = nominalFrameRate > 0 ? Double(nominalFrameRate) : 30
+        let frameDuration = CMTime(seconds: 1.0 / frameRate, preferredTimescale: 600)
 
-        guard let reader = try? AVAssetReader(asset: asset) else { throw RenderError.cannotRead }
-        let readerOutput = AVAssetReaderTrackOutput(
-            track: track,
-            outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
-        )
-        guard reader.canAdd(readerOutput) else { throw RenderError.cannotRead }
-        reader.add(readerOutput)
+        // Never render larger than the biggest display can show.
+        let output = outputSize(for: naturalSize)
 
         guard let writer = try? AVAssetWriter(outputURL: destination, fileType: .mov) else {
             throw RenderError.cannotWrite
@@ -115,69 +177,71 @@ enum PingPongRenderer {
             mediaType: .video,
             outputSettings: [
                 AVVideoCodecKey: AVVideoCodecType.hevc,
-                AVVideoWidthKey: Int(abs(naturalSize.width)),
-                AVVideoHeightKey: Int(abs(naturalSize.height)),
+                AVVideoWidthKey: Int(output.width),
+                AVVideoHeightKey: Int(output.height),
             ]
         )
         writerInput.expectsMediaDataInRealTime = false
         writerInput.transform = transform
-
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(
-            assetWriterInput: writerInput,
-            sourcePixelBufferAttributes: nil
-        )
+            assetWriterInput: writerInput, sourcePixelBufferAttributes: nil)
         guard writer.canAdd(writerInput) else { throw RenderError.cannotWrite }
         writer.add(writerInput)
-
-        // Pass 1: collect every frame.
-        reader.startReading()
-        var frames: [CVPixelBuffer] = []
-        while let sample = readerOutput.copyNextSampleBuffer() {
-            if let buffer = CMSampleBufferGetImageBuffer(sample) {
-                frames.append(buffer)
-            }
-        }
-        guard reader.status == .completed, !frames.isEmpty else { throw RenderError.cannotRead }
-
-        // Pass 2: write forward, then backward. The last forward frame is not
-        // repeated as the first reverse frame — that would visibly stutter at
-        // the turnaround.
-        let ordered = frames + frames.dropLast().reversed()
-        let total = Float(ordered.count)
 
         writer.startWriting()
         writer.startSession(atSourceTime: .zero)
 
-        var index = 0
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let queue = DispatchQueue(label: "com.live.hazel.pingpong-render")
-            writerInput.requestMediaDataWhenReady(on: queue) {
-                while writerInput.isReadyForMoreMediaData {
-                    guard index < ordered.count else {
-                        writerInput.markAsFinished()
-                        writer.finishWriting {
-                            if writer.status == .completed {
-                                continuation.resume()
-                            } else {
-                                let detail = writer.error?.localizedDescription ?? "The render didn't finish."
-                                continuation.resume(throwing: RenderError.writeFailed(detail))
-                            }
-                        }
-                        return
-                    }
+        let totalSeconds = duration.seconds
+        let totalFrames = max(Int(totalSeconds * frameRate), 1)
+        var written = 0
 
-                    let time = CMTimeMultiply(frameDuration, multiplier: Int32(index))
-                    if !adaptor.append(ordered[index], withPresentationTime: time) {
-                        let detail = writer.error?.localizedDescription ?? "Couldn't write a frame."
-                        continuation.resume(throwing: RenderError.writeFailed(detail))
-                        return
-                    }
-                    index += 1
-                    progress(Float(index) / total)
-                }
+        func append(_ buffer: CVPixelBuffer) throws {
+            while !writerInput.isReadyForMoreMediaData {
+                usleep(5_000)
             }
+            let time = CMTimeMultiply(frameDuration, multiplier: Int32(written))
+            guard adaptor.append(buffer, withPresentationTime: time) else {
+                throw RenderError.writeFailed(
+                    writer.error?.localizedDescription ?? "Couldn't write a frame.")
+            }
+            written += 1
+            progress(min(Float(written) / Float(totalFrames * 2), 1))
         }
 
-        log.info("rendered ping-pong: \(ordered.count) frames")
+        // Forward half: stream straight through, one frame resident at a time.
+        for try await buffer in frames(of: asset, track: track, range: nil, size: output) {
+            try append(buffer)
+        }
+
+        // Reverse half: walk backwards a window at a time so memory stays bounded
+        // no matter how long the clip is.
+        let window = 1.0
+        var end = totalSeconds
+        while end > 0 {
+            let start = Swift.max(end - window, 0)
+            let range = CMTimeRange(
+                start: CMTime(seconds: start, preferredTimescale: 600),
+                duration: CMTime(seconds: end - start, preferredTimescale: 600))
+
+            var chunk: [CVPixelBuffer] = []
+            for try await buffer in frames(of: asset, track: track, range: range, size: output) {
+                chunk.append(buffer)
+            }
+            // Skip the frame that ends the forward pass, or the turnaround stutters.
+            if end == totalSeconds { chunk = chunk.dropLast() }
+            for buffer in chunk.reversed() {
+                try append(buffer)
+            }
+            end = start
+        }
+
+        writerInput.markAsFinished()
+        await writer.finishWriting()
+        guard writer.status == .completed else {
+            throw RenderError.writeFailed(
+                writer.error?.localizedDescription ?? "The render didn't finish.")
+        }
+
+        log.info("rendered ping-pong: \(written) frames at \(Int(output.width))x\(Int(output.height))")
     }
 }

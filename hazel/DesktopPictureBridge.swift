@@ -21,6 +21,8 @@ final class DesktopPictureBridge {
 
     private let log = Logger(subsystem: "com.live.hazel", category: "desktop-picture")
     private let fileManager = FileManager.default
+    /// Serial so two rapid wallpaper switches can't extract frames concurrently.
+    private let workQueue = DispatchQueue(label: "com.live.hazel.desktop-picture", qos: .utility)
 
     /// The user's own desktop picture per display, remembered so it can be put
     /// back. Persisted because a crash must not cost the user their setting.
@@ -36,16 +38,42 @@ final class DesktopPictureBridge {
     // MARK: - Public API
 
     /// Sets every screen's desktop picture to a still frame of `item`'s video.
+    ///
+    /// Returns immediately. Extracting a full-resolution frame takes long enough
+    /// that doing it inline would freeze the UI — this is called from
+    /// `setWallpaper`, which runs on the main thread every time a card is tapped.
     func apply(item: WallpaperItem) {
+        // Screen state must be read on the main thread; the decode must not be.
+        let targets: [(screen: NSScreen, size: CGSize)] = NSScreen.screens.map {
+            ($0, pixelSize(of: $0))
+        }
         rememberOriginalsIfNeeded()
 
-        for screen in NSScreen.screens {
-            guard let frameURL = stillFrame(for: item, sized: pixelSize(of: screen)) else { continue }
-            do {
-                try NSWorkspace.shared.setDesktopImageURL(frameURL, for: screen, options: [:])
-            } catch {
-                log.error("couldn't set desktop picture: \(String(describing: error), privacy: .public)")
+        workQueue.async { [weak self] in
+            guard let self else { return }
+            for target in targets {
+                guard let frameURL = self.stillFrame(for: item, sized: target.size) else { continue }
+                DispatchQueue.main.async {
+                    do {
+                        try NSWorkspace.shared.setDesktopImageURL(frameURL, for: target.screen, options: [:])
+                    } catch {
+                        self.log.error("couldn't set desktop picture: \(String(describing: error), privacy: .public)")
+                    }
+                }
             }
+        }
+    }
+
+    /// Deletes cached still frames for a wallpaper that no longer exists.
+    ///
+    /// Frames are named `<item id>-<width>x<height>.png`, so one wallpaper can
+    /// have several (one per display size it has been shown on).
+    func discardFrames(for item: WallpaperItem) {
+        let prefix = item.id.uuidString
+        guard let files = try? fileManager.contentsOfDirectory(at: framesURL,
+                                                               includingPropertiesForKeys: nil) else { return }
+        for file in files where file.lastPathComponent.hasPrefix(prefix) {
+            try? fileManager.removeItem(at: file)
         }
     }
 
