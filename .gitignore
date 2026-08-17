@@ -31,3 +31,6 @@ Thumbs.db
 
 # Git worktrees (scratch, used for isolated implementation work)
 .worktrees/
+
+# Planning docs stay local — the published repo is code only
+docs/superpowers/
